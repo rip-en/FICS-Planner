@@ -58,8 +58,15 @@ export function PlanToolbar() {
     try {
       const text = await file.text();
       const parsed = JSON.parse(text) as ExportShape;
-      if (!parsed.plans || !parsed.activePlanId) throw new Error("bad file");
-      replacePlans(parsed.plans, parsed.activePlanId);
+      if (!parsed.plans || typeof parsed.plans !== "object") {
+        throw new Error("bad file");
+      }
+      const planIds = Object.keys(parsed.plans);
+      if (planIds.length === 0) throw new Error("bad file");
+      const activePlanId = parsed.plans[parsed.activePlanId]
+        ? parsed.activePlanId
+        : planIds[0];
+      replacePlans(parsed.plans, activePlanId);
     } catch {
       alert("Could not import that file.");
     }
@@ -106,6 +113,7 @@ export function PlanToolbar() {
               setObjective(e.target.value as PlannerConfig["objective"])
             }
             className="input w-auto"
+            aria-label="Optimization objective"
           >
             <option value="buildings">Min buildings</option>
             <option value="raw">Min raw inputs</option>

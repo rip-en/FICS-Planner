@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ItemIcon } from "@/components/item-icon";
 import { RecipeCard } from "@/components/item-detail/recipe-card";
+import { CollapsibleSection } from "@/components/ui/collapsible-section";
 import {
   allItems,
   getItem,
@@ -77,23 +78,38 @@ export default function ItemPage({ params }: PageProps) {
         </div>
       </header>
 
-      <Section title={`Recipes · ${producers.length}`}>
+      <CollapsibleSection
+        title={`Recipes · ${producers.length}`}
+        className="mt-6"
+        contentClassName="space-y-3"
+        heading="h2"
+      >
         {producers.length === 0 ? (
           <p className="text-sm text-gray-500">No standard recipe.</p>
         ) : (
           producers.map((r) => <RecipeCard key={r.id} recipe={r} />)
         )}
-      </Section>
+      </CollapsibleSection>
 
       {alternates.length > 0 && (
-        <Section title={`Alternate recipes · ${alternates.length}`}>
+        <CollapsibleSection
+          title={`Alternate recipes · ${alternates.length}`}
+          className="mt-6"
+          contentClassName="space-y-3"
+          heading="h2"
+        >
           {alternates.map((r) => (
             <RecipeCard key={r.id} recipe={r} />
           ))}
-        </Section>
+        </CollapsibleSection>
       )}
 
-      <Section title={`Used to craft · ${consumers.length}`}>
+      <CollapsibleSection
+        title={`Used to craft · ${consumers.length}`}
+        className="mt-6"
+        contentClassName="space-y-3"
+        heading="h2"
+      >
         {consumers.length === 0 ? (
           <p className="text-sm text-gray-500">Not used as an ingredient.</p>
         ) : (
@@ -107,12 +123,12 @@ export default function ItemPage({ params }: PageProps) {
                   )}
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {r.products.map((p) => {
+                  {r.products.map((p, idx) => {
                     const prod = getItem(p.item);
                     if (!prod) return null;
                     return (
                       <Link
-                        key={p.item}
+                        key={`${p.item}-${idx}`}
                         href={`/items/${prod.slug}`}
                         className="flex items-center gap-1.5 rounded-md border border-surface-border bg-surface px-2 py-0.5 text-xs hover:border-brand/60"
                       >
@@ -133,24 +149,7 @@ export default function ItemPage({ params }: PageProps) {
             ))}
           </div>
         )}
-      </Section>
+      </CollapsibleSection>
     </main>
-  );
-}
-
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="mt-6">
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-gray-400">
-        {title}
-      </h2>
-      <div className="space-y-3">{children}</div>
-    </section>
   );
 }

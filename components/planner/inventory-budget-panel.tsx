@@ -313,6 +313,7 @@ export function InventoryBudgetPanel({
             {analyzeDropdownOpen && analyzeQuery.trim().length > 0 && (
               <ul
                 role="listbox"
+                aria-label="Matching items"
                 className="absolute z-20 mt-1 max-h-44 w-full overflow-y-auto rounded-md border border-surface-border bg-surface-raised py-1 shadow-lg"
               >
                 {analyzeHits.map((it) => (
@@ -320,6 +321,7 @@ export function InventoryBudgetPanel({
                     <button
                       type="button"
                       role="option"
+                      aria-selected={analyzeId === it.id}
                       onMouseDown={(e) => {
                         e.preventDefault();
                       }}

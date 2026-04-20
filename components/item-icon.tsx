@@ -13,6 +13,9 @@ export interface ItemIconProps {
 
 export function ItemIcon({ iconUrl, alt, size = 32, className }: ItemIconProps) {
   const [broken, setBroken] = useState(false);
+  const initials = alt.trim()
+    ? alt.slice(0, 2).toUpperCase()
+    : "?";
   if (!iconUrl || broken) {
     return (
       <div
@@ -21,9 +24,9 @@ export function ItemIcon({ iconUrl, alt, size = 32, className }: ItemIconProps) 
           className,
         )}
         style={{ width: size, height: size }}
-        aria-label={alt}
+        aria-label={alt || "Item"}
       >
-        {alt.slice(0, 2).toUpperCase()}
+        {initials}
       </div>
     );
   }

@@ -173,14 +173,22 @@ export function RecipeCard({
       </div>
       <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
         <div className="space-y-1">
-          {recipe.ingredients.map((ing) => (
-            <IngredientRow key={ing.item} ing={ing} onItemClick={onItemClick} />
+          {recipe.ingredients.map((ing, idx) => (
+            <IngredientRow
+              key={`${ing.item}-${idx}`}
+              ing={ing}
+              onItemClick={onItemClick}
+            />
           ))}
         </div>
         <ArrowRight className="h-4 w-4 text-gray-500" aria-hidden />
         <div className="space-y-1">
-          {recipe.products.map((p) => (
-            <IngredientRow key={p.item} ing={p} onItemClick={onItemClick} />
+          {recipe.products.map((p, idx) => (
+            <IngredientRow
+              key={`${p.item}-${idx}`}
+              ing={p}
+              onItemClick={onItemClick}
+            />
           ))}
         </div>
       </div>

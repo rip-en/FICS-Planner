@@ -17,6 +17,7 @@ export function ItemCard({ item, active, onSelect, onAddTarget }: ItemCardProps)
       type="button"
       onClick={() => onSelect(item.id)}
       onDoubleClick={() => onAddTarget?.(item.id)}
+      aria-current={active ? "true" : undefined}
       title={`${item.name} — double-click to add as planner target`}
       className={cn(
         "group flex w-full items-center gap-2 rounded-md border border-surface-border bg-surface-raised p-2 text-left transition hover:border-brand/60 hover:bg-surface-border",

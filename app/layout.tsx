@@ -58,7 +58,7 @@ export default function RootLayout({
               <a
                 href="https://github.com/"
                 target="_blank"
-                rel="noreferrer"
+                rel="noopener noreferrer"
                 className="hidden items-center gap-1.5 rounded-md border border-surface-border px-2 py-1 text-xs text-gray-400 transition hover:border-gray-500 hover:text-gray-100 sm:inline-flex"
               >
                 <Github className="h-3.5 w-3.5" />

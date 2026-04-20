@@ -12,8 +12,44 @@ import Link from "next/link";
 import { useMemo } from "react";
 import { ItemIcon } from "@/components/item-icon";
 import { RecipeCard } from "@/components/item-detail/recipe-card";
+import { CollapsibleSection } from "@/components/ui/collapsible-section";
 import { getItem, recipesConsuming, recipesProducing } from "@/lib/data";
 import { cn, formatRate } from "@/lib/utils";
+
+function DrawerUnknownItem({
+  itemId,
+  onClose,
+}: {
+  itemId: string;
+  onClose: () => void;
+}) {
+  return (
+    <aside className="flex h-full flex-col border-l border-surface-border bg-surface-raised">
+      <div className="flex items-center justify-between border-b border-surface-border px-3 py-2">
+        <span className="text-xs uppercase tracking-wider text-gray-500">
+          Details
+        </span>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md p-1.5 text-gray-400 transition hover:bg-surface hover:text-gray-100"
+          aria-label="Close detail drawer"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-5">
+        <p className="text-sm text-amber-200/90">
+          This item is not in the current game data ({itemId}). It may come from
+          an old imported plan or a removed mod item.
+        </p>
+        <button type="button" onClick={onClose} className="btn mt-4">
+          Close
+        </button>
+      </div>
+    </aside>
+  );
+}
 
 function DrawerWelcome() {
   return (
@@ -91,6 +127,7 @@ export function DetailDrawer({
   onUseOnlyThis,
 }: DetailDrawerProps) {
   const item = itemId ? getItem(itemId) : undefined;
+  const missingItem = Boolean(itemId && !item);
   const enabledSet = useMemo(
     () => new Set(enabledAlternates),
     [enabledAlternates],
@@ -119,6 +156,9 @@ export function DetailDrawer({
   }, [itemId]);
   const hasCompetitors = producerCount > 1;
 
+  if (missingItem && itemId) {
+    return <DrawerUnknownItem itemId={itemId} onClose={onClose} />;
+  }
   if (!item) return <DrawerWelcome />;
 
   return (
@@ -197,7 +237,11 @@ export function DetailDrawer({
           </div>
         </header>
 
-        <Section title={`Recipes · ${producers.length}`}>
+        <CollapsibleSection
+          title={`Recipes · ${producers.length}`}
+          className="border-b border-surface-border p-4"
+          contentClassName="space-y-2"
+        >
           {producers.length === 0 ? (
             <p className="text-sm text-gray-500">No standard recipe.</p>
           ) : (
@@ -214,10 +258,14 @@ export function DetailDrawer({
               />
             ))
           )}
-        </Section>
+        </CollapsibleSection>
 
         {alternates.length > 0 && (
-          <Section title={`Alternate recipes · ${alternates.length}`}>
+          <CollapsibleSection
+            title={`Alternate recipes · ${alternates.length}`}
+            className="border-b border-surface-border p-4"
+            contentClassName="space-y-2"
+          >
             <p className="mb-2 text-[11px] text-gray-500">
               Enable an alternate so the planner can choose it. If the solver
               still picks the standard recipe, hit{" "}
@@ -239,10 +287,14 @@ export function DetailDrawer({
                 hasCompetitors={hasCompetitors}
               />
             ))}
-          </Section>
+          </CollapsibleSection>
         )}
 
-        <Section title={`Used to craft · ${consumers.length}`}>
+        <CollapsibleSection
+          title={`Used to craft · ${consumers.length}`}
+          className="border-b border-surface-border p-4"
+          contentClassName="space-y-2"
+        >
           {consumers.length === 0 ? (
             <p className="text-sm text-gray-500">
               Not used as an ingredient.
@@ -264,26 +316,9 @@ export function DetailDrawer({
               ))}
             </div>
           )}
-        </Section>
+        </CollapsibleSection>
       </div>
     </aside>
-  );
-}
-
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="border-b border-surface-border p-4">
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">
-        {title}
-      </h3>
-      <div className="space-y-2">{children}</div>
-    </section>
   );
 }
 
@@ -305,12 +340,12 @@ function ConsumerRow({
         {alternate && <span className="chip border-brand/60 text-brand">Alt</span>}
       </div>
       <div className="flex flex-wrap gap-1.5">
-        {products.map((p) => {
+        {products.map((p, idx) => {
           const item = getItem(p.id);
           if (!item) return null;
           return (
             <button
-              key={p.id}
+              key={`${p.id}-${idx}`}
               type="button"
               onClick={() => onSelect(p.id)}
               className="flex items-center gap-1.5 rounded-md border border-surface-border bg-surface px-1.5 py-0.5 text-xs hover:border-brand/60"
