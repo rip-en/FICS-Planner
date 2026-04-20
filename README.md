@@ -1,4 +1,4 @@
-# Factory
+# FICS-Planner
 
 > A unified catalog, recipe browser, and factory planner for **Satisfactory 1.1**. Everything on one screen — no more tab graveyards.
 
