@@ -1,0 +1,43 @@
+{
+  "Desc_GeneratorCoal_C": {
+    "id": "Desc_GeneratorCoal_C",
+    "fuel": [
+      "Desc_Coal_C",
+      "Desc_CompactedCoal_C",
+      "Desc_PetroleumCoke_C"
+    ],
+    "powerProduction": 75
+  },
+  "Desc_GeneratorNuclear_C": {
+    "id": "Desc_GeneratorNuclear_C",
+    "fuel": [
+      "Desc_NuclearFuelRod_C",
+      "Desc_PlutoniumFuelRod_C",
+      "Desc_FicsoniumFuelRod_C"
+    ],
+    "powerProduction": 2500
+  },
+  "Desc_GeneratorFuel_C": {
+    "id": "Desc_GeneratorFuel_C",
+    "fuel": [
+      "Desc_LiquidFuel_C",
+      "Desc_LiquidTurboFuel_C",
+      "Desc_LiquidBiofuel_C",
+      "Desc_RocketFuel_C",
+      "Desc_IonizedFuel_C"
+    ],
+    "powerProduction": 250
+  },
+  "Desc_GeneratorBiomass_Automated_C": {
+    "id": "Desc_GeneratorBiomass_Automated_C",
+    "fuel": [
+      "Desc_Leaves_C",
+      "Desc_Wood_C",
+      "Desc_Mycelia_C",
+      "Desc_GenericBiomass_C",
+      "Desc_Biofuel_C",
+      "Desc_PackagedBiofuel_C"
+    ],
+    "powerProduction": 30
+  }
+}

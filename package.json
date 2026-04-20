@@ -1,0 +1,58 @@
+{
+  "name": "factory",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A unified catalog, recipe browser, and factory planner for Satisfactory 1.1. Single-page dashboard with fuzzy search, LP-based production solver, alternate recipe management, and shareable plans.",
+  "keywords": [
+    "satisfactory",
+    "factory-planner",
+    "production-planner",
+    "recipe-calculator",
+    "nextjs",
+    "typescript",
+    "linear-programming"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/<your-user>/factory.git"
+  },
+  "homepage": "https://github.com/<your-user>/factory#readme",
+  "bugs": {
+    "url": "https://github.com/<your-user>/factory/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "etl": "tsx scripts/etl.ts",
+    "etl:fetch": "curl -L https://raw.githubusercontent.com/greeny/SatisfactoryTools/master/data/data1.0.json -o data/raw/data.json && npm run etl"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "fuse.js": "^7.0.0",
+    "javascript-lp-solver": "^0.4.24",
+    "lucide-react": "^0.454.0",
+    "next": "^14.2.18",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^5.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "^14.2.18",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.15",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

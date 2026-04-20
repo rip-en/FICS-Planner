@@ -1,0 +1,36 @@
+# dependencies
+node_modules/
+
+# next.js
+/.next/
+/out/
+
+# build artifacts
+/dist/
+/build/
+*.tsbuildinfo
+
+# raw game data dump (keep the normalized JSON in /data committed)
+/data/raw/*
+!/data/raw/.gitkeep
+
+# env
+.env
+.env.local
+.env.*.local
+
+# editor/system
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# generated documentation images
+/public/screenshots/*.local.png
