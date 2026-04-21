@@ -82,7 +82,7 @@ export function PlanToolbar() {
         <select
           value={activePlanId}
           onChange={(e) => switchPlan(e.target.value)}
-          className="input max-w-[140px] shrink-0"
+          className="input min-w-0 max-w-[min(100%,11rem)] shrink-0 sm:max-w-[140px]"
           aria-label="Switch plan"
         >
           {plansSorted.map((p) => (

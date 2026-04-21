@@ -15,11 +15,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/<your-user>/factory.git"
+    "url": "https://github.com/rip-en/FICS-Planner.git"
   },
-  "homepage": "https://github.com/<your-user>/factory#readme",
+  "homepage": "https://github.com/rip-en/FICS-Planner#readme",
   "bugs": {
-    "url": "https://github.com/<your-user>/factory/issues"
+    "url": "https://github.com/rip-en/FICS-Planner/issues"
   },
   "engines": {
     "node": ">=20"

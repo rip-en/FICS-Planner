@@ -11,6 +11,8 @@ interface CollapsibleSectionProps {
   className?: string;
   contentClassName?: string;
   heading?: "h2" | "h3";
+  /** Bordered panel with comfortable touch targets for mobile. */
+  variant?: "plain" | "panel";
 }
 
 export function CollapsibleSection({
@@ -20,19 +22,33 @@ export function CollapsibleSection({
   className,
   contentClassName,
   heading: HeadingTag = "h3",
+  variant = "plain",
 }: CollapsibleSectionProps) {
   const [open, setOpen] = useState(defaultOpen);
   const panelId = useId();
+  const isPanel = variant === "panel";
 
   return (
-    <section className={className}>
+    <section
+      className={cn(
+        isPanel &&
+          "rounded-lg border border-surface-border bg-surface-raised/80",
+        className,
+      )}
+    >
       <button
         type="button"
         id={`${panelId}-trigger`}
         aria-expanded={open}
         aria-controls={panelId}
         onClick={() => setOpen((v) => !v)}
-        className="mb-2 flex w-full items-center justify-between gap-2 text-left transition hover:text-gray-200"
+        className={cn(
+          "flex w-full items-center justify-between gap-2 text-left transition hover:text-gray-200",
+          isPanel
+            ? "min-h-11 touch-manipulation rounded-t-lg border-b border-transparent px-3 py-2.5 sm:min-h-0 sm:py-2"
+            : "mb-2 min-h-10 touch-manipulation sm:min-h-0",
+          open && isPanel && "border-surface-border",
+        )}
       >
         <HeadingTag
           className={cn(
@@ -52,7 +68,14 @@ export function CollapsibleSection({
       </button>
       {open && (
         <div id={panelId} role="region" aria-labelledby={`${panelId}-trigger`}>
-          <div className={cn(contentClassName)}>{children}</div>
+          <div
+            className={cn(
+              isPanel && "px-3 pb-3 pt-1",
+              contentClassName,
+            )}
+          >
+            {children}
+          </div>
         </div>
       )}
     </section>

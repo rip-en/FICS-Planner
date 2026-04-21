@@ -72,8 +72,8 @@ export function ResultsTable({ result, onInspect }: ResultsTableProps) {
       </div>
 
       <CollapsibleSection title="Recipes in use" contentClassName="mt-0">
-        <div className="overflow-hidden rounded-md border border-surface-border">
-          <table className="w-full text-sm">
+        <div className="-mx-1 overflow-x-auto overflow-y-hidden rounded-md border border-surface-border sm:mx-0">
+          <table className="w-full min-w-[640px] text-sm sm:min-w-0">
             <thead className="bg-surface text-[11px] uppercase tracking-wider text-gray-400">
               <tr>
                 <th className="p-2 text-left">Recipe</th>

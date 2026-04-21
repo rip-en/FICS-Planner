@@ -4,6 +4,7 @@ import Fuse from "fuse.js";
 import { Lightbulb, LineChart, Plus, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ItemIcon } from "@/components/item-icon";
+import { CollapsibleSection } from "@/components/ui/collapsible-section";
 import { SearchInput } from "@/components/ui/search-input";
 import { allItems, getItem } from "@/lib/data";
 import {
@@ -29,6 +30,7 @@ export function InventoryBudgetPanel({
 }: InventoryBudgetPanelProps) {
   const setRawCap = usePlannerStore((s) => s.setRawCap);
   const clearRawCaps = usePlannerStore((s) => s.clearRawCaps);
+  const upsertTarget = usePlannerStore((s) => s.upsertTarget);
 
   const rawItems = useMemo(
     () => allItems().filter((it) => it.isRaw),
@@ -139,7 +141,7 @@ export function InventoryBudgetPanel({
   }, [config]);
 
   return (
-    <div className="card flex flex-col gap-4 p-4">
+    <div className="card flex flex-col gap-3 p-3 sm:gap-4 sm:p-4">
       <header>
         <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-400">
           Raw budgets and automation insight
@@ -151,21 +153,24 @@ export function InventoryBudgetPanel({
         </p>
       </header>
 
-      <section>
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <span className="text-xs font-medium text-gray-400">
-            Capped inputs
-          </span>
+      <div className="flex flex-col gap-3">
+        <CollapsibleSection
+          variant="panel"
+          title="Capped inputs"
+          defaultOpen
+          contentClassName="space-y-2"
+        >
           {Object.keys(caps).length > 0 && (
-            <button
-              type="button"
-              onClick={() => clearRawCaps()}
-              className="text-[11px] text-gray-500 hover:text-gray-300"
-            >
-              Clear all
-            </button>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => clearRawCaps()}
+                className="min-h-9 touch-manipulation text-[11px] text-gray-500 hover:text-gray-300 sm:min-h-0"
+              >
+                Clear all
+              </button>
+            </div>
           )}
-        </div>
 
         {capEntries.length === 0 ? (
           <p className="rounded-md border border-dashed border-surface-border p-3 text-xs text-gray-500">
@@ -267,23 +272,30 @@ export function InventoryBudgetPanel({
           <button
             type="button"
             onClick={() => setShowAdd(true)}
-            className="btn mt-3 w-full justify-center gap-1.5 text-xs"
+            className="btn mt-3 min-h-10 w-full touch-manipulation justify-center gap-1.5 text-xs sm:min-h-0"
           >
             <Plus className="h-3.5 w-3.5" />
             Add raw budget
           </button>
         )}
-      </section>
+        </CollapsibleSection>
 
-      <section className="border-t border-surface-border pt-4">
-        <div className="mb-2 flex items-center gap-2 text-xs font-medium text-gray-400">
-          <LineChart className="h-3.5 w-3.5" />
-          Target throughput
-        </div>
-        <p className="mb-2 text-xs text-gray-500">
-          Pick something you want to automate. See the maximum output/min your
-          caps allow, what still counts as a missing input (recipe disabled),
-          and what is pulling from uncapped raws.
+        <CollapsibleSection
+          variant="panel"
+          title="Target throughput"
+          defaultOpen
+          contentClassName="space-y-2"
+        >
+        <p className="flex items-start gap-2 text-xs text-gray-500">
+          <LineChart
+            className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gray-500"
+            aria-hidden
+          />
+          <span>
+            Pick something you want to automate. See the maximum output/min your
+            caps allow, what still counts as a missing input (recipe disabled),
+            and what is pulling from uncapped raws.
+          </span>
         </p>
         <div className="flex flex-wrap gap-2">
           <div className="relative min-w-[200px] flex-1">
@@ -345,7 +357,7 @@ export function InventoryBudgetPanel({
             type="button"
             disabled={!analyzeId || busy !== null}
             onClick={runAnalyze}
-            className="btn shrink-0 text-xs"
+            className="btn min-h-10 shrink-0 touch-manipulation text-xs sm:min-h-0"
           >
             {busy === "analyze" ? "…" : "Calculate"}
           </button>
@@ -413,53 +425,75 @@ export function InventoryBudgetPanel({
               )}
           </div>
         )}
-      </section>
+        </CollapsibleSection>
 
-      <section className="border-t border-surface-border pt-4">
-        <div className="mb-2 flex items-center gap-2 text-xs font-medium text-gray-400">
-          <Lightbulb className="h-3.5 w-3.5" />
-          Suggestions
-        </div>
-        <p className="mb-2 text-xs text-gray-500">
-          High–sink-value products you can route from your capped inputs (top
-          candidates by score, then by max rate).
+        <CollapsibleSection
+          variant="panel"
+          title="Suggestions"
+          defaultOpen={false}
+          contentClassName="space-y-2"
+        >
+        <p className="flex items-start gap-2 text-xs text-gray-500">
+          <Lightbulb
+            className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gray-500"
+            aria-hidden
+          />
+          <span>
+            High–sink-value products you can route from your capped inputs (top
+            candidates by score, then by max rate).
+          </span>
         </p>
         <button
           type="button"
           disabled={Object.keys(caps).length === 0 || busy !== null}
           onClick={runSuggest}
-          className="btn text-xs"
+          className="btn min-h-10 touch-manipulation text-xs sm:min-h-0"
         >
           {busy === "suggest" ? "Computing…" : "Suggest items to automate"}
         </button>
         {suggestions.length > 0 && (
-          <ul className="mt-3 space-y-1.5 text-sm">
-            {suggestions.map((s) => {
-              const it = getItem(s.itemId);
-              if (!it) return null;
-              return (
-                <li key={s.itemId}>
-                  <button
-                    type="button"
-                    onClick={() => onInspect(s.itemId)}
-                    className="flex w-full items-center justify-between gap-2 rounded-md border border-surface-border bg-surface px-2 py-1.5 text-left hover:border-brand/50"
-                  >
-                    <span className="flex min-w-0 items-center gap-2">
-                      <ItemIcon iconUrl={it.iconUrl} alt={it.name} size={24} />
-                      <span className="truncate font-medium">{it.name}</span>
-                    </span>
-                    <span className="num shrink-0 text-xs text-gray-400">
-                      {s.unbounded
-                        ? "∞ /min"
-                        : `${formatRate(s.maxRate)} /min`}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+          <>
+            <ul className="mt-2 space-y-1.5 text-sm">
+              {suggestions.map((s) => {
+                const it = getItem(s.itemId);
+                if (!it) return null;
+                return (
+                  <li key={s.itemId}>
+                    <button
+                      type="button"
+                      onClick={() => onInspect(s.itemId)}
+                      className="flex min-h-11 w-full touch-manipulation items-center justify-between gap-2 rounded-md border border-surface-border bg-surface px-2 py-2 text-left hover:border-brand/50 sm:min-h-0 sm:py-1.5"
+                    >
+                      <span className="flex min-w-0 items-center gap-2">
+                        <ItemIcon iconUrl={it.iconUrl} alt={it.name} size={24} />
+                        <span className="truncate font-medium">{it.name}</span>
+                      </span>
+                      <span className="num shrink-0 text-xs text-gray-400">
+                        {s.unbounded
+                          ? "∞ /min"
+                          : `${formatRate(s.maxRate)} /min`}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+            <button
+              type="button"
+              className="btn mt-3 w-full text-xs"
+              onClick={() => {
+                for (const s of suggestions.slice(0, 3)) {
+                  const rate = s.unbounded ? 60 : s.maxRate;
+                  if (rate > 0) upsertTarget(s.itemId, rate);
+                }
+              }}
+            >
+              Add top 3 as production targets
+            </button>
+          </>
         )}
-      </section>
+        </CollapsibleSection>
+      </div>
     </div>
   );
 }

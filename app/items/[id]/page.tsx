@@ -39,7 +39,7 @@ export default function ItemPage({ params }: PageProps) {
   const consumers = recipesConsuming(item.id);
 
   return (
-    <main className="mx-auto max-w-5xl p-6">
+    <main className="mx-auto max-w-5xl p-4 pb-8 sm:p-6">
       <nav className="mb-4 text-xs text-gray-500">
         <Link href="/" className="hover:text-gray-200">
           ← Back to Planner

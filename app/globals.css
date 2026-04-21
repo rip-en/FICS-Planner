@@ -16,7 +16,6 @@ body {
 
 body {
   font-feature-settings: "cv11", "ss01", "tnum";
-  min-height: 100vh;
 }
 
 /* Subtle hex-dot background on the app shell - reads as a factory floor.

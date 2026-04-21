@@ -83,9 +83,10 @@ function DrawerWelcome() {
           </li>
           <li className="flex items-center gap-2">
             <span className="rounded border border-surface-border bg-surface px-1.5 py-0.5 text-[10px] text-gray-300">
-              Double-click
+              +
             </span>
-            Add as a production target
+            In the catalog, use the + button (or double-click a row) to add a
+            target
           </li>
           <li className="flex items-center gap-2">
             <Search className="h-3 w-3" />

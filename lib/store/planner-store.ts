@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { knownAlternates } from "@/lib/planner/solver";
 import type { PlannerConfig, PlannerTarget } from "@/lib/planner/types";
 import { DEFAULT_PLANNER_CONFIG } from "@/lib/planner/types";
 
@@ -16,9 +17,13 @@ interface PlannerState {
   activePlanId: string;
   plans: Record<string, SavedPlan>;
   addTarget: (itemId: string, rate?: number) => void;
+  /** Add or replace a single target in one update (avoids stale reads when batching). */
+  upsertTarget: (itemId: string, rate: number) => void;
   removeTarget: (itemId: string) => void;
   setTargetRate: (itemId: string, rate: number) => void;
   toggleAlternate: (recipeId: string) => void;
+  /** Enable every alternate recipe the planner knows about (machine alternates). */
+  enableAllAlternates: () => void;
   toggleDisabled: (recipeId: string) => void;
   /** Lock an item to a single recipe: enable it if alternate, disable every
    * competing producer for each of its products. */
@@ -75,6 +80,24 @@ export const usePlannerStore = create<PlannerState>()(
           return { plans: { ...state.plans, [plan.id]: nextPlan } };
         }),
 
+      upsertTarget: (itemId, rate) =>
+        set((state) => {
+          const plan = state.plans[state.activePlanId];
+          if (!plan) return {};
+          const exists = plan.config.targets.some((t) => t.itemId === itemId);
+          const targets = exists
+            ? plan.config.targets.map((t) =>
+                t.itemId === itemId ? { ...t, rate } : t,
+              )
+            : [...plan.config.targets, { itemId, rate }];
+          const nextPlan: SavedPlan = {
+            ...plan,
+            updatedAt: Date.now(),
+            config: { ...plan.config, targets },
+          };
+          return { plans: { ...state.plans, [plan.id]: nextPlan } };
+        }),
+
       removeTarget: (itemId) =>
         set((state) => {
           const plan = state.plans[state.activePlanId];
@@ -120,6 +143,22 @@ export const usePlannerStore = create<PlannerState>()(
             config: {
               ...plan.config,
               enabledAlternates: Array.from(enabled),
+            },
+          };
+          return { plans: { ...state.plans, [plan.id]: nextPlan } };
+        }),
+
+      enableAllAlternates: () =>
+        set((state) => {
+          const plan = state.plans[state.activePlanId];
+          if (!plan) return {};
+          const ids = knownAlternates().map((r) => r.id);
+          const nextPlan: SavedPlan = {
+            ...plan,
+            updatedAt: Date.now(),
+            config: {
+              ...plan.config,
+              enabledAlternates: ids,
             },
           };
           return { plans: { ...state.plans, [plan.id]: nextPlan } };

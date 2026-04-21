@@ -94,14 +94,14 @@ export function CatalogPanel({
           hint="/"
         />
       </div>
-      <div className="flex flex-wrap gap-1 border-b border-surface-border px-3 pb-2">
+      <div className="flex gap-1 overflow-x-auto border-b border-surface-border px-3 pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {categories.map((c) => (
           <button
             key={c}
             type="button"
             onClick={() => setCategory(c)}
             className={cn(
-              "rounded-md border px-2 py-0.5 text-xs transition",
+              "shrink-0 touch-manipulation rounded-md border px-2.5 py-1.5 text-xs transition sm:py-0.5",
               category === c
                 ? "border-brand bg-brand/15 text-brand"
                 : "border-surface-border text-gray-400 hover:border-gray-500 hover:text-gray-200",
@@ -128,7 +128,9 @@ export function CatalogPanel({
         )}
       </div>
       <div className="border-t border-surface-border px-3 py-2 text-[11px] text-gray-500">
-        Click = details · Double-click = add to planner
+        Tap row for details ·{" "}
+        <span className="hidden sm:inline">Double-click row or </span>
+        use + to add a target
       </div>
     </aside>
   );
