@@ -34,6 +34,11 @@ export interface PlannerConfig {
    * Items not listed remain unlimited. Used by the solver and inventory insight.
    */
   rawCaps?: Record<string, number>;
+  /**
+   * Raw inputs the planner is not allowed to source at all.
+   * Useful for banning resources you do not want in this factory.
+   */
+  excludedRawInputs?: string[];
 }
 
 export const DEFAULT_PLANNER_CONFIG: PlannerConfig = {
@@ -42,4 +47,5 @@ export const DEFAULT_PLANNER_CONFIG: PlannerConfig = {
   disabledRecipes: [],
   objective: "buildings",
   rawCaps: undefined,
+  excludedRawInputs: undefined,
 };

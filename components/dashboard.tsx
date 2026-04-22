@@ -142,6 +142,16 @@ export function Dashboard() {
               )}
               <TargetsPanel
                 targets={plan?.config.targets ?? []}
+                config={
+                  plan?.config ?? {
+                    targets: [],
+                    enabledAlternates: [],
+                    disabledRecipes: [],
+                    objective: "buildings",
+                    rawCaps: undefined,
+                    excludedRawInputs: undefined,
+                  }
+                }
                 onInspect={pushItem}
               />
               <AltRecipeToggles

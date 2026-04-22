@@ -1,23 +1,118 @@
 "use client";
 
-import { ChevronDown, Minus, Plus, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { ChevronDown, Loader2, Minus, Plus, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { getItem } from "@/lib/data";
+import { solvePlan } from "@/lib/planner/solver";
 import { usePlannerStore } from "@/lib/store/planner-store";
-import type { PlannerTarget } from "@/lib/planner/types";
+import type { PlannerConfig, PlannerTarget } from "@/lib/planner/types";
 import { ItemIcon } from "@/components/item-icon";
 import { PlannerEmptyState } from "@/components/planner/empty-state";
-import { cn } from "@/lib/utils";
+import { cn, formatRate } from "@/lib/utils";
 
 interface TargetsPanelProps {
   targets: PlannerTarget[];
+  config: PlannerConfig;
   onInspect: (itemId: string) => void;
 }
 
-export function TargetsPanel({ targets, onInspect }: TargetsPanelProps) {
+interface MarginalRawCost {
+  feasible: boolean;
+  deltas: Array<{ itemId: string; delta: number }>;
+}
+
+function toRawMap(rows: Array<{ itemId: string; ratePerMin: number }>) {
+  const out = new Map<string, number>();
+  for (const row of rows) out.set(row.itemId, row.ratePerMin);
+  return out;
+}
+
+export function TargetsPanel({ targets, config, onInspect }: TargetsPanelProps) {
   const setRate = usePlannerStore((s) => s.setTargetRate);
   const remove = usePlannerStore((s) => s.removeTarget);
   const [bodyOpen, setBodyOpen] = useState(true);
+  const [costByTarget, setCostByTarget] = useState<Record<string, MarginalRawCost>>(
+    {},
+  );
+  const [isComputingCosts, setIsComputingCosts] = useState(false);
+
+  const targetSignature = useMemo(
+    () =>
+      targets
+        .map((t) => `${t.itemId}:${t.rate}`)
+        .sort()
+        .join("|"),
+    [targets],
+  );
+  const configSignature = useMemo(
+    () =>
+      JSON.stringify({
+        objective: config.objective,
+        rawCaps: config.rawCaps ?? {},
+        excludedRawInputs: config.excludedRawInputs ?? [],
+        enabledAlternates: [...config.enabledAlternates].sort(),
+        disabledRecipes: [...config.disabledRecipes].sort(),
+      }),
+    [
+      config.disabledRecipes,
+      config.enabledAlternates,
+      config.excludedRawInputs,
+      config.objective,
+      config.rawCaps,
+    ],
+  );
+
+  useEffect(() => {
+    if (targets.length === 0) {
+      setCostByTarget({});
+      setIsComputingCosts(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsComputingCosts(true);
+
+    const timer = setTimeout(() => {
+      if (cancelled) return;
+      const base = solvePlan(config);
+      const next: Record<string, MarginalRawCost> = {};
+      if (!base.feasible) {
+        for (const t of targets) next[t.itemId] = { feasible: false, deltas: [] };
+      } else {
+        const baseRaw = toRawMap(base.rawInputs);
+        for (const t of targets) {
+          const bumpedConfig: PlannerConfig = {
+            ...config,
+            targets: config.targets.map((x) =>
+              x.itemId === t.itemId ? { ...x, rate: x.rate + 1 } : x,
+            ),
+          };
+          const bumped = solvePlan(bumpedConfig);
+          if (!bumped.feasible) {
+            next[t.itemId] = { feasible: false, deltas: [] };
+            continue;
+          }
+          const bumpedRaw = toRawMap(bumped.rawInputs);
+          const seen = new Set([...baseRaw.keys(), ...bumpedRaw.keys()]);
+          const deltas: Array<{ itemId: string; delta: number }> = [];
+          for (const itemId of seen) {
+            const delta = (bumpedRaw.get(itemId) ?? 0) - (baseRaw.get(itemId) ?? 0);
+            if (delta > 1e-5) deltas.push({ itemId, delta });
+          }
+          deltas.sort((a, b) => b.delta - a.delta);
+          next[t.itemId] = { feasible: true, deltas };
+        }
+      }
+      if (cancelled) return;
+      setCostByTarget(next);
+      setIsComputingCosts(false);
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [config, configSignature, targetSignature, targets]);
 
   if (targets.length === 0) return <PlannerEmptyState />;
 
@@ -76,6 +171,36 @@ export function TargetsPanel({ targets, onInspect }: TargetsPanelProps) {
                     </div>
                     <div className="text-[11px] text-gray-500">
                       {item.category}
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-gray-500">
+                      {isComputingCosts ? (
+                        <span className="inline-flex items-center gap-1">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Calculating +1/min raw cost...
+                        </span>
+                      ) : costByTarget[t.itemId]?.feasible === false ? (
+                        "No feasible +1/min increment under current caps/toggles."
+                      ) : (costByTarget[t.itemId]?.deltas.length ?? 0) === 0 ? (
+                        "+1/min raw cost: no additional capped/raw draw"
+                      ) : (
+                        <>
+                          +1/min raw cost:{" "}
+                          {costByTarget[t.itemId]?.deltas.slice(0, 3).map((d, i) => (
+                            <span key={`${t.itemId}-${d.itemId}`}>
+                              {getItem(d.itemId)?.name ?? d.itemId} +{formatRate(d.delta)}
+                              {i <
+                              Math.min(
+                                3,
+                                (costByTarget[t.itemId]?.deltas.length ?? 0),
+                              ) -
+                                1
+                                ? ", "
+                                : ""}
+                            </span>
+                          ))}
+                          {(costByTarget[t.itemId]?.deltas.length ?? 0) > 3 && "…"}
+                        </>
+                      )}
                     </div>
                   </div>
                 </button>

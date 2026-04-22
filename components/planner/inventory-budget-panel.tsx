@@ -9,8 +9,10 @@ import { SearchInput } from "@/components/ui/search-input";
 import { allItems, getItem } from "@/lib/data";
 import {
   maximizeTargetRate,
+  suggestExcessAutomatableItems,
   suggestAutomatableItems,
 } from "@/lib/planner/inventory-insight";
+import { solvePlan } from "@/lib/planner/solver";
 import type { PlannerConfig } from "@/lib/planner/types";
 import { usePlannerStore } from "@/lib/store/planner-store";
 import { cn, formatRate } from "@/lib/utils";
@@ -29,6 +31,7 @@ export function InventoryBudgetPanel({
   onAddTargetAtRate,
 }: InventoryBudgetPanelProps) {
   const setRawCap = usePlannerStore((s) => s.setRawCap);
+  const setRawExcluded = usePlannerStore((s) => s.setRawExcluded);
   const clearRawCaps = usePlannerStore((s) => s.clearRawCaps);
   const upsertTarget = usePlannerStore((s) => s.upsertTarget);
 
@@ -48,6 +51,7 @@ export function InventoryBudgetPanel({
 
   const [addQuery, setAddQuery] = useState("");
   const [showAdd, setShowAdd] = useState(false);
+  const [addMode, setAddMode] = useState<"cap" | "exclude">("cap");
 
   const addHits = useMemo(() => {
     const q = addQuery.trim();
@@ -63,6 +67,17 @@ export function InventoryBudgetPanel({
 
   const capEntries = Object.entries(caps).sort((a, b) =>
     (getItem(a[0])?.name ?? a[0]).localeCompare(getItem(b[0])?.name ?? b[0]),
+  );
+  const excludedRawInputs = useMemo(
+    () => new Set(config.excludedRawInputs ?? []),
+    [config.excludedRawInputs],
+  );
+  const excludedEntries = useMemo(
+    () =>
+      Array.from(excludedRawInputs).sort((a, b) =>
+        (getItem(a)?.name ?? a).localeCompare(getItem(b)?.name ?? b),
+      ),
+    [excludedRawInputs],
   );
 
   const [analyzeId, setAnalyzeId] = useState<string | null>(null);
@@ -106,16 +121,25 @@ export function InventoryBudgetPanel({
   const [suggestions, setSuggestions] = useState<
     ReturnType<typeof suggestAutomatableItems>
   >([]);
-  const [busy, setBusy] = useState<"analyze" | "suggest" | null>(null);
+  const [excessSuggestions, setExcessSuggestions] = useState<
+    ReturnType<typeof suggestExcessAutomatableItems>
+  >([]);
+  const [excessStatus, setExcessStatus] = useState<string | null>(null);
+  const [busy, setBusy] = useState<"analyze" | "suggest" | "excess" | null>(null);
 
   const handlePickRaw = useCallback(
     (itemId: string) => {
-      if (caps[itemId] !== undefined) return;
-      setRawCap(itemId, 60);
+      if (addMode === "cap") {
+        if (caps[itemId] !== undefined || excludedRawInputs.has(itemId)) return;
+        setRawCap(itemId, 60);
+      } else {
+        if (excludedRawInputs.has(itemId)) return;
+        setRawExcluded(itemId, true);
+      }
       setAddQuery("");
       setShowAdd(false);
     },
-    [caps, setRawCap],
+    [addMode, caps, excludedRawInputs, setRawCap, setRawExcluded],
   );
 
   const runAnalyze = useCallback(() => {
@@ -135,6 +159,30 @@ export function InventoryBudgetPanel({
     setSuggestions([]);
     try {
       setSuggestions(suggestAutomatableItems(config, { limit: 20 }));
+    } finally {
+      setBusy(null);
+    }
+  }, [config]);
+
+  const runSuggestExcess = useCallback(() => {
+    setBusy("excess");
+    setExcessSuggestions([]);
+    setExcessStatus(null);
+    try {
+      const base = solvePlan(config);
+      if (!base.feasible) {
+        setExcessStatus(
+          "Current targets are not feasible with active caps/recipes. Fix that first, then try extras.",
+        );
+        return;
+      }
+      const rows = suggestExcessAutomatableItems(config, { limit: 20 });
+      setExcessSuggestions(rows);
+      if (rows.length === 0) {
+        setExcessStatus(
+          "No extra automations fit in the remaining capped input headroom.",
+        );
+      }
     } finally {
       setBusy(null);
     }
@@ -214,6 +262,14 @@ export function InventoryBudgetPanel({
                   </label>
                   <button
                     type="button"
+                    onClick={() => setRawExcluded(itemId, true)}
+                    className="rounded px-1.5 py-1 text-[11px] text-amber-200/90 hover:bg-surface-border hover:text-amber-100"
+                    title="Exclude this raw input from planner sourcing"
+                  >
+                    Exclude
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setRawCap(itemId, null)}
                     className="rounded p-1 text-gray-500 hover:bg-surface-border hover:text-gray-200"
                     aria-label={`Remove ${it.name}`}
@@ -226,6 +282,42 @@ export function InventoryBudgetPanel({
           </ul>
         )}
 
+        {excludedEntries.length > 0 && (
+          <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-2">
+            <p className="mb-2 text-xs text-amber-200/90">
+              Excluded inputs (planner will not source these):
+            </p>
+            <ul className="space-y-1.5">
+              {excludedEntries.map((itemId) => {
+                const it = getItem(itemId);
+                if (!it) return null;
+                return (
+                  <li
+                    key={`excluded-${itemId}`}
+                    className="flex items-center gap-2 rounded border border-amber-500/20 bg-surface p-1.5"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => onInspect(itemId)}
+                      className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                    >
+                      <ItemIcon iconUrl={it.iconUrl} alt={it.name} size={22} />
+                      <span className="truncate text-sm">{it.name}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRawExcluded(itemId, false)}
+                      className="btn px-2 py-1 text-[11px]"
+                    >
+                      Include again
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
         {showAdd ? (
           <div className="mt-3 space-y-2 rounded-md border border-surface-border bg-surface p-2">
             <div className="flex items-center justify-between gap-2">
@@ -233,7 +325,11 @@ export function InventoryBudgetPanel({
                 label="Search raw resources"
                 value={addQuery}
                 onChange={setAddQuery}
-                placeholder="Coal, sulfur, oil…"
+                placeholder={
+                  addMode === "cap"
+                    ? "Coal, sulfur, oil…"
+                    : "Pick an input to exclude…"
+                }
                 size="sm"
                 className="flex-1"
               />
@@ -255,10 +351,17 @@ export function InventoryBudgetPanel({
                   <button
                     type="button"
                     onClick={() => handlePickRaw(it.id)}
-                    disabled={caps[it.id] !== undefined}
+                    disabled={
+                      addMode === "cap"
+                        ? caps[it.id] !== undefined || excludedRawInputs.has(it.id)
+                        : excludedRawInputs.has(it.id)
+                    }
                     className={cn(
                       "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-surface-raised",
-                      caps[it.id] !== undefined && "opacity-40",
+                      (addMode === "cap"
+                        ? caps[it.id] !== undefined || excludedRawInputs.has(it.id)
+                        : excludedRawInputs.has(it.id)) &&
+                        "opacity-40",
                     )}
                   >
                     <ItemIcon iconUrl={it.iconUrl} alt={it.name} size={22} />
@@ -269,14 +372,31 @@ export function InventoryBudgetPanel({
             </ul>
           </div>
         ) : (
-          <button
-            type="button"
-            onClick={() => setShowAdd(true)}
-            className="btn mt-3 min-h-10 w-full touch-manipulation justify-center gap-1.5 text-xs sm:min-h-0"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Add raw budget
-          </button>
+          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => {
+                setAddMode("cap");
+                setShowAdd(true);
+              }}
+              className="btn min-h-10 w-full touch-manipulation justify-center gap-1.5 text-xs sm:min-h-0"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add raw budget
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAddMode("exclude");
+                setShowAdd(true);
+              }}
+              className="btn min-h-10 w-full touch-manipulation justify-center gap-1.5 text-xs sm:min-h-0"
+              title="Add a raw input to excluded list"
+            >
+              <X className="h-3.5 w-3.5" />
+              Exclude input
+            </button>
+          </div>
         )}
         </CollapsibleSection>
 
@@ -451,6 +571,25 @@ export function InventoryBudgetPanel({
         >
           {busy === "suggest" ? "Computing…" : "Suggest items to automate"}
         </button>
+        <button
+          type="button"
+          disabled={
+            Object.keys(caps).length === 0 ||
+            config.targets.length === 0 ||
+            busy !== null
+          }
+          onClick={runSuggestExcess}
+          className="btn min-h-10 touch-manipulation text-xs sm:min-h-0"
+          title={
+            config.targets.length === 0
+              ? "Add one or more production targets first"
+              : "Find extra products that can use leftover capped input headroom"
+          }
+        >
+          {busy === "excess"
+            ? "Computing excess paths…"
+            : "Suggest extras from remaining caps"}
+        </button>
         {suggestions.length > 0 && (
           <>
             <ul className="mt-2 space-y-1.5 text-sm">
@@ -491,6 +630,53 @@ export function InventoryBudgetPanel({
               Add top 3 as production targets
             </button>
           </>
+        )}
+        {excessSuggestions.length > 0 && (
+          <>
+            <p className="mt-3 text-xs text-gray-500">
+              Extras that can be added while preserving your current targets:
+            </p>
+            <ul className="space-y-1.5 text-sm">
+              {excessSuggestions.map((s) => {
+                const it = getItem(s.itemId);
+                if (!it) return null;
+                return (
+                  <li key={`excess-${s.itemId}`}>
+                    <button
+                      type="button"
+                      onClick={() => onInspect(s.itemId)}
+                      className="flex min-h-11 w-full touch-manipulation items-center justify-between gap-2 rounded-md border border-surface-border bg-surface px-2 py-2 text-left hover:border-brand/50 sm:min-h-0 sm:py-1.5"
+                    >
+                      <span className="flex min-w-0 items-center gap-2">
+                        <ItemIcon iconUrl={it.iconUrl} alt={it.name} size={24} />
+                        <span className="truncate font-medium">{it.name}</span>
+                      </span>
+                      <span className="num shrink-0 text-xs text-gray-400">
+                        +{formatRate(s.maxAdditionalRate)} /min
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+            <button
+              type="button"
+              className="btn mt-2 w-full text-xs"
+              onClick={() => {
+                for (const s of excessSuggestions.slice(0, 3)) {
+                  if (s.maxAdditionalRate <= 0) continue;
+                  const existingRate =
+                    config.targets.find((t) => t.itemId === s.itemId)?.rate ?? 0;
+                  upsertTarget(s.itemId, existingRate + s.maxAdditionalRate);
+                }
+              }}
+            >
+              Add top 3 extras from remaining caps
+            </button>
+          </>
+        )}
+        {busy !== "excess" && excessStatus && (
+          <p className="mt-2 text-xs text-amber-200/90">{excessStatus}</p>
         )}
         </CollapsibleSection>
       </div>

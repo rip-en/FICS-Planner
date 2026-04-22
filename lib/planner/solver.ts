@@ -27,10 +27,17 @@ const EPS = 1e-6;
 export function getActiveRecipesForPlanner(config: PlannerConfig) {
   const enabled = new Set(config.enabledAlternates);
   const disabled = new Set(config.disabledRecipes);
+  const excludedRawInputs = new Set(config.excludedRawInputs ?? []);
   return allRecipes().filter((r) => {
     if (!r.inMachine || r.forBuilding) return false;
     if (disabled.has(r.id)) return false;
     if (r.alternate && !enabled.has(r.id)) return false;
+    if (
+      r.products.some((p) => excludedRawInputs.has(p.item)) ||
+      r.ingredients.some((i) => excludedRawInputs.has(i.item))
+    ) {
+      return false;
+    }
     return true;
   });
 }
@@ -119,9 +126,14 @@ export function solvePlan(config: PlannerConfig): SolverResult {
     constraints: {},
     variables: {},
   };
+  const excludedRawInputs = new Set(config.excludedRawInputs ?? []);
 
   // Constraint for each non-raw referenced item: net output >= target (or 0).
   for (const itemId of referenced) {
+    if (excludedRawInputs.has(itemId)) {
+      model.constraints[itemId] = { equal: 0 };
+      continue;
+    }
     if (available.has(itemId) && !targetMap.has(itemId)) continue;
     const target = targetMap.get(itemId) ?? 0;
     model.constraints[itemId] = { min: target };
@@ -158,6 +170,7 @@ export function solvePlan(config: PlannerConfig): SolverResult {
 
   for (const itemId of referenced) {
     if (!available.has(itemId)) continue;
+    if (pool.raw.has(itemId) && excludedRawInputs.has(itemId)) continue;
     if (!model.constraints[itemId]) model.constraints[itemId] = { min: 0 };
     const isMissing = pool.missing.has(itemId);
     const v: Record<string, number> = { [itemId]: 1 };

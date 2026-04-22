@@ -24,6 +24,8 @@ interface PlannerState {
   toggleAlternate: (recipeId: string) => void;
   /** Enable every alternate recipe the planner knows about (machine alternates). */
   enableAllAlternates: () => void;
+  /** Disable every alternate recipe for the planner. */
+  disableAllAlternates: () => void;
   toggleDisabled: (recipeId: string) => void;
   /** Lock an item to a single recipe: enable it if alternate, disable every
    * competing producer for each of its products. */
@@ -31,6 +33,8 @@ interface PlannerState {
   setObjective: (obj: PlannerConfig["objective"]) => void;
   /** Max supply items/min for this raw; null removes the cap. */
   setRawCap: (itemId: string, ratePerMin: number | null) => void;
+  /** Exclude a raw input from planner sourcing (or include it back). */
+  setRawExcluded: (itemId: string, excluded: boolean) => void;
   clearRawCaps: () => void;
   clearTargets: () => void;
   clearRecipeOverrides: () => void;
@@ -164,6 +168,21 @@ export const usePlannerStore = create<PlannerState>()(
           return { plans: { ...state.plans, [plan.id]: nextPlan } };
         }),
 
+      disableAllAlternates: () =>
+        set((state) => {
+          const plan = state.plans[state.activePlanId];
+          if (!plan) return {};
+          const nextPlan: SavedPlan = {
+            ...plan,
+            updatedAt: Date.now(),
+            config: {
+              ...plan.config,
+              enabledAlternates: [],
+            },
+          };
+          return { plans: { ...state.plans, [plan.id]: nextPlan } };
+        }),
+
       toggleDisabled: (recipeId) =>
         set((state) => {
           const plan = state.plans[state.activePlanId];
@@ -238,10 +257,12 @@ export const usePlannerStore = create<PlannerState>()(
           const plan = state.plans[state.activePlanId];
           if (!plan) return {};
           const nextCaps = { ...(plan.config.rawCaps ?? {}) };
+          const nextExcluded = new Set(plan.config.excludedRawInputs ?? []);
           if (ratePerMin === null || ratePerMin <= 0 || !Number.isFinite(ratePerMin)) {
             delete nextCaps[itemId];
           } else {
             nextCaps[itemId] = ratePerMin;
+            nextExcluded.delete(itemId);
           }
           const nextPlan: SavedPlan = {
             ...plan,
@@ -249,6 +270,35 @@ export const usePlannerStore = create<PlannerState>()(
             config: {
               ...plan.config,
               rawCaps: Object.keys(nextCaps).length ? nextCaps : undefined,
+              excludedRawInputs: nextExcluded.size
+                ? Array.from(nextExcluded)
+                : undefined,
+            },
+          };
+          return { plans: { ...state.plans, [plan.id]: nextPlan } };
+        }),
+
+      setRawExcluded: (itemId, excluded) =>
+        set((state) => {
+          const plan = state.plans[state.activePlanId];
+          if (!plan) return {};
+          const nextExcluded = new Set(plan.config.excludedRawInputs ?? []);
+          const nextCaps = { ...(plan.config.rawCaps ?? {}) };
+          if (excluded) {
+            nextExcluded.add(itemId);
+            delete nextCaps[itemId];
+          } else {
+            nextExcluded.delete(itemId);
+          }
+          const nextPlan: SavedPlan = {
+            ...plan,
+            updatedAt: Date.now(),
+            config: {
+              ...plan.config,
+              rawCaps: Object.keys(nextCaps).length ? nextCaps : undefined,
+              excludedRawInputs: nextExcluded.size
+                ? Array.from(nextExcluded)
+                : undefined,
             },
           };
           return { plans: { ...state.plans, [plan.id]: nextPlan } };

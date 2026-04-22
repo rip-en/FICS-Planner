@@ -1,17 +1,21 @@
 "use client";
 
 import Fuse from "fuse.js";
-import { Layers, Sparkles, X } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { Hash, Layers, Loader2, Sparkles, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ItemIcon } from "@/components/item-icon";
 import { CollapsibleSection } from "@/components/ui/collapsible-section";
 import { SearchInput } from "@/components/ui/search-input";
 import { allItems, getItem } from "@/lib/data";
 import {
+  canOfferBeltSnap,
   oneMachineLayerRates,
+  suggestBundleBeltSnapRates,
+  suggestBundlePerfectRates,
   suggestBundleTargetRates,
 } from "@/lib/planner/bundle-insight";
 import type { PlannerConfig } from "@/lib/planner/types";
+import { solvePlan } from "@/lib/planner/solver";
 import { usePlannerStore } from "@/lib/store/planner-store";
 import { cn, formatRate } from "@/lib/utils";
 
@@ -20,11 +24,109 @@ interface AutomationBundlePanelProps {
   onInspect: (itemId: string) => void;
 }
 
+interface PathMetrics {
+  feasible: boolean;
+  rawTotal: number;
+  byproductTotal: number;
+  totalBuildings: number;
+}
+
+interface PathOption {
+  id: string;
+  label: string;
+  hint: string;
+  objective: PlannerConfig["objective"];
+  rates: Record<string, number>;
+  metrics: PathMetrics;
+}
+
+interface DerivedBundleState {
+  preview: ReturnType<typeof suggestBundleTargetRates> | null;
+  beltSnap: ReturnType<typeof suggestBundleBeltSnapRates> | null;
+  pathOptions: PathOption[];
+}
+
+const EMPTY_DERIVED: DerivedBundleState = {
+  preview: null,
+  beltSnap: null,
+  pathOptions: [],
+};
+
+function evaluateRates(
+  config: PlannerConfig,
+  rates: Record<string, number>,
+  objective: PlannerConfig["objective"],
+): PathMetrics {
+  const targets = Object.entries(rates).map(([itemId, rate]) => ({
+    itemId,
+    rate,
+  }));
+  const plan = solvePlan({ ...config, objective, targets });
+  const rawTotal = plan.rawInputs.reduce((sum, row) => sum + row.ratePerMin, 0);
+  const byproductTotal = plan.byproducts.reduce(
+    (sum, row) => sum + row.ratePerMin,
+    0,
+  );
+  return {
+    feasible: plan.feasible,
+    rawTotal,
+    byproductTotal,
+    totalBuildings: plan.totalBuildings,
+  };
+}
+
+function buildDerivedBundleState(
+  config: PlannerConfig,
+  draftIds: string[],
+): DerivedBundleState {
+  const hasCaps =
+    config.rawCaps !== undefined && Object.keys(config.rawCaps).length > 0;
+  const preview = suggestBundleTargetRates(config, draftIds);
+  const beltSnap =
+    canOfferBeltSnap(hasCaps, preview)
+      ? suggestBundleBeltSnapRates(config, draftIds, { suggestion: preview })
+      : null;
+  const perfect = suggestBundlePerfectRates(config, draftIds);
+  const maxRates = preview?.rates ?? oneMachineLayerRates(config, draftIds);
+  const pathOptions: PathOption[] = [
+    {
+      id: "path-min-buildings",
+      label: "Path: min buildings",
+      hint: "Uses current bundle scale and solves with building count priority.",
+      objective: "buildings",
+      rates: maxRates,
+      metrics: evaluateRates(config, maxRates, "buildings"),
+    },
+    {
+      id: "path-min-raw",
+      label: "Path: min raw inputs",
+      hint: "Same bundle targets, solved with raw input priority.",
+      objective: "raw",
+      rates: maxRates,
+      metrics: evaluateRates(config, maxRates, "raw"),
+    },
+  ];
+
+  if (perfect) {
+    pathOptions.push({
+      id: "path-perfect-numbers",
+      label: "Path: perfect-ish numbers",
+      hint: "Searches bundle scales for cleaner raw/byproduct rates (180/120/100/60/50/30).",
+      objective: "raw",
+      rates: perfect.rates,
+      metrics: evaluateRates(config, perfect.rates, "raw"),
+    });
+  }
+
+  return { preview, beltSnap, pathOptions };
+}
+
 export function AutomationBundlePanel({
   config,
   onInspect,
 }: AutomationBundlePanelProps) {
   const upsertTarget = usePlannerStore((s) => s.upsertTarget);
+  const setObjective = usePlannerStore((s) => s.setObjective);
 
   const craftable = useMemo(
     () => allItems().filter((it) => !it.isRaw),
@@ -43,8 +145,11 @@ export function AutomationBundlePanel({
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const computeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previewCache = useRef(new Map<string, DerivedBundleState>());
 
   const [draftIds, setDraftIds] = useState<string[]>([]);
+  const [isComputing, setIsComputing] = useState(false);
 
   const hits = useMemo(() => {
     const q = query.trim();
@@ -81,24 +186,92 @@ export function AutomationBundlePanel({
     [upsertTarget],
   );
 
+  const applyPath = useCallback(
+    (
+      rates: Record<string, number>,
+      objective?: PlannerConfig["objective"],
+    ) => {
+      if (objective) setObjective(objective);
+      applyRates(rates);
+    },
+    [applyRates, setObjective],
+  );
+
   const handleOneMachineEach = useCallback(() => {
     if (draftIds.length === 0) return;
-    applyRates(oneMachineLayerRates(config, draftIds));
-  }, [applyRates, config, draftIds]);
+    applyPath(oneMachineLayerRates(config, draftIds));
+  }, [applyPath, config, draftIds]);
 
   const handleMaxUnderCaps = useCallback(() => {
     if (draftIds.length === 0) return;
     const suggestion = suggestBundleTargetRates(config, draftIds);
-    applyRates(suggestion.rates);
-  }, [applyRates, config, draftIds]);
+    applyPath(suggestion.rates, config.objective);
+  }, [applyPath, config, draftIds]);
 
   const hasCaps =
     config.rawCaps !== undefined && Object.keys(config.rawCaps).length > 0;
+  const [derived, setDerived] = useState<DerivedBundleState>(EMPTY_DERIVED);
 
-  const preview = useMemo(() => {
-    if (draftIds.length === 0) return null;
-    return suggestBundleTargetRates(config, draftIds);
-  }, [config, draftIds]);
+  const draftSignature = useMemo(
+    () => [...draftIds].sort().join("|"),
+    [draftIds],
+  );
+  const configSignature = useMemo(
+    () =>
+      JSON.stringify({
+        rawCaps: config.rawCaps ?? {},
+        objective: config.objective,
+        enabledAlternates: [...config.enabledAlternates].sort(),
+        disabledRecipes: [...config.disabledRecipes].sort(),
+      }),
+    [config.disabledRecipes, config.enabledAlternates, config.objective, config.rawCaps],
+  );
+  const cacheKey = `${draftSignature}::${configSignature}`;
+
+  useEffect(() => {
+    if (computeTimer.current !== null) {
+      clearTimeout(computeTimer.current);
+      computeTimer.current = null;
+    }
+    if (draftIds.length === 0) {
+      setDerived(EMPTY_DERIVED);
+      setIsComputing(false);
+      return;
+    }
+
+    const cached = previewCache.current.get(cacheKey);
+    if (cached) {
+      setDerived(cached);
+      setIsComputing(false);
+      return;
+    }
+
+    setIsComputing(true);
+    computeTimer.current = setTimeout(() => {
+      const next = buildDerivedBundleState(config, draftIds);
+      previewCache.current.set(cacheKey, next);
+      setDerived(next);
+      setIsComputing(false);
+      computeTimer.current = null;
+    }, 0);
+
+    return () => {
+      if (computeTimer.current !== null) {
+        clearTimeout(computeTimer.current);
+        computeTimer.current = null;
+      }
+    };
+  }, [cacheKey, config, draftIds]);
+
+  const preview = derived.preview;
+  const beltSnap = derived.beltSnap;
+  const pathOptions = derived.pathOptions;
+
+  const handleBeltSnap = useCallback(() => {
+    if (draftIds.length === 0) return;
+    if (!beltSnap || beltSnap.noop) return;
+    applyPath(beltSnap.rates, "raw");
+  }, [applyPath, beltSnap, draftIds.length]);
 
   return (
     <div className="card flex flex-col gap-3 p-3 sm:gap-4 sm:p-4">
@@ -109,8 +282,12 @@ export function AutomationBundlePanel({
         <p className="mt-1 text-xs leading-relaxed text-gray-500">
           Pick several end products (for example Radio Control Unit and Crystal
           Oscillator). Apply starter rates from one machine each, or scale the
-          whole bundle to fit your raw budgets. Then tweak numbers in Targets;
-          raw inputs and recipes update automatically.
+          whole bundle to fit your raw budgets. Fractional raw pulls (for example
+          147/min ore) usually mean the bundle scale sits between clean belt
+          lines — use{" "}
+          <span className="font-medium text-gray-400">Tidy raw (÷60)</span> after
+          max-under-caps, or nudge individual targets in Targets until raw inputs
+          land on numbers you like (60 / 120 / 180 per minute per Mk belt tier).
         </p>
       </header>
 
@@ -209,7 +386,16 @@ export function AutomationBundlePanel({
           </ul>
         )}
 
-        {preview && draftIds.length > 0 && (
+        {isComputing && draftIds.length > 0 && (
+          <div className="rounded-md border border-surface-border bg-surface p-3 text-xs text-gray-400">
+            <div className="flex items-center gap-2 text-gray-300">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Computing bundle paths and raw fit...
+            </div>
+          </div>
+        )}
+
+        {!isComputing && preview && draftIds.length > 0 && (
           <div className="rounded-md border border-surface-border bg-surface p-3 text-xs text-gray-400">
             <div className="mb-2 font-medium text-gray-300">Preview</div>
             <ul className="space-y-1.5">
@@ -254,6 +440,45 @@ export function AutomationBundlePanel({
                 smaller bundle instead.
               </p>
             )}
+            {hasCaps && preview.unbounded && draftIds.length > 0 && (
+              <p className="mt-2 text-gray-500">
+                Raw budgets are not binding yet, so there is no fixed “ceiling” to
+                snap against. Tighten a cap or set targets manually, then try belt
+                tidy again — or adjust one end product up/down a little; raw
+                numbers track those targets proportionally.
+              </p>
+            )}
+            {beltSnap && !beltSnap.noop && (
+              <p className="mt-2 text-gray-500">
+                Belt tidy (preview): scale the bundle so{" "}
+                <button
+                  type="button"
+                  onClick={() => onInspect(beltSnap.pivotItemId)}
+                  className="font-medium text-brand hover:underline"
+                >
+                  {getItem(beltSnap.pivotItemId)?.name ?? beltSnap.pivotItemId}
+                </button>{" "}
+                moves from{" "}
+                <span className="num text-gray-300">
+                  {formatRate(beltSnap.pivotRateBefore)}
+                </span>{" "}
+                →{" "}
+                <span className="num text-gray-300">
+                  {formatRate(beltSnap.pivotRateAfter)}
+                </span>{" "}
+                /min (≤{" "}
+                <span className="num text-gray-300">
+                  {formatRate(beltSnap.targetPivotRate)}
+                </span>{" "}
+                /min belt step).
+              </p>
+            )}
+            {beltSnap && beltSnap.noop && canOfferBeltSnap(hasCaps, preview) && (
+              <p className="mt-2 text-gray-500">
+                Dominant raw for this bundle is already on a{" "}
+                {formatRate(beltSnap.stepPerMin, 0)}/min step (after max scale).
+              </p>
+            )}
             {preview.scale <= 0 && draftIds.length > 0 && (
               <p className="mt-2 text-red-300/90">
                 This combination is not feasible with current recipe toggles and
@@ -263,10 +488,62 @@ export function AutomationBundlePanel({
           </div>
         )}
 
+        {!isComputing && pathOptions.length > 0 && (
+          <div className="rounded-md border border-surface-border bg-surface p-3 text-xs text-gray-400">
+            <div className="mb-2 font-medium text-gray-300">Generated paths</div>
+            <div className="space-y-2">
+              {pathOptions.map((option) => (
+                <div
+                  key={option.id}
+                  className="rounded border border-surface-border/80 bg-surface-raised p-2"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-medium text-gray-200">{option.label}</p>
+                    <button
+                      type="button"
+                      onClick={() => applyPath(option.rates, option.objective)}
+                      disabled={!option.metrics.feasible}
+                      className="btn px-2 py-1 text-[11px]"
+                    >
+                      Apply
+                    </button>
+                  </div>
+                  <p className="mt-1 text-gray-500">{option.hint}</p>
+                  <p className="mt-1 text-gray-400">
+                    Raw:{" "}
+                    <span className="num text-gray-300">
+                      {formatRate(option.metrics.rawTotal)}
+                    </span>{" "}
+                    /min, Buildings:{" "}
+                    <span className="num text-gray-300">
+                      {option.metrics.totalBuildings}
+                    </span>
+                    , Waste:{" "}
+                    <span className="num text-gray-300">
+                      {formatRate(option.metrics.byproductTotal)}
+                    </span>{" "}
+                    /min
+                  </p>
+                  {!option.metrics.feasible && (
+                    <p className="mt-1 text-red-300/90">
+                      Not feasible with the current recipe toggles/caps.
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+            <p className="mt-2 text-gray-500">
+              Perfect-ish keeps fractional machine counts if needed, but tries to
+              make upstream raw and waste rates cleaner so your logistics are easier
+              to lay out.
+            </p>
+          </div>
+        )}
+
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
           <button
             type="button"
-            disabled={draftIds.length === 0}
+            disabled={draftIds.length === 0 || isComputing}
             onClick={handleOneMachineEach}
             className="btn min-h-10 flex-1 touch-manipulation justify-center gap-1.5 text-xs sm:min-h-0"
           >
@@ -277,6 +554,7 @@ export function AutomationBundlePanel({
             type="button"
             disabled={
               draftIds.length === 0 ||
+              isComputing ||
               !hasCaps ||
               (preview !== null && preview.scale <= 0)
             }
@@ -293,6 +571,34 @@ export function AutomationBundlePanel({
           >
             <Sparkles className="h-3.5 w-3.5" />
             Apply: max under raw caps
+          </button>
+          <button
+            type="button"
+            disabled={
+              draftIds.length === 0 ||
+              isComputing ||
+              preview === null ||
+              preview.scale <= 0 ||
+              !canOfferBeltSnap(hasCaps, preview) ||
+              beltSnap === null ||
+              beltSnap.noop
+            }
+            onClick={handleBeltSnap}
+            className="btn min-h-10 flex-1 touch-manipulation justify-center gap-1.5 text-xs sm:min-h-0"
+            title={
+              preview === null
+                ? undefined
+                : !canOfferBeltSnap(hasCaps, preview)
+                  ? "When caps do not bind the bundle, set stricter budgets or tune targets for clean raw numbers"
+                  : beltSnap?.noop
+                    ? "Dominant raw is already on a 60/min belt step at this scale"
+                    : beltSnap === null
+                      ? "This bundle cannot be snapped to a belt step with the current recipe set"
+                      : "Scale the bundle down slightly so the heaviest raw lands on a 60/min belt line (e.g. 120 instead of 147)"
+            }
+          >
+            <Hash className="h-3.5 w-3.5" />
+            Apply: tidy raw (÷60)
           </button>
         </div>
       </CollapsibleSection>

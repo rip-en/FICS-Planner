@@ -112,6 +112,11 @@ export interface SuggestionRow {
   unbounded: boolean;
 }
 
+export interface ExcessSuggestionRow {
+  itemId: string;
+  maxAdditionalRate: number;
+}
+
 /**
  * Rank machine-craftable items by how much output/min your raw caps allow (single-item factory).
  */
@@ -148,5 +153,89 @@ export function suggestAutomatableItems(
   }
 
   rows.sort((a, b) => b.maxRate - a.maxRate);
+  return rows.slice(0, limit);
+}
+
+function withAdditionalTarget(
+  base: PlannerConfig,
+  itemId: string,
+  additionalRate: number,
+): PlannerConfig {
+  const hasExisting = base.targets.some((t) => t.itemId === itemId);
+  const targets = hasExisting
+    ? base.targets.map((t) =>
+        t.itemId === itemId
+          ? { ...t, rate: t.rate + additionalRate }
+          : t,
+      )
+    : [...base.targets, { itemId, rate: additionalRate }];
+  return {
+    ...base,
+    targets,
+  };
+}
+
+function isFeasibleWithAdditionalRate(
+  base: PlannerConfig,
+  itemId: string,
+  additionalRate: number,
+): boolean {
+  return solvePlan(withAdditionalTarget(base, itemId, additionalRate)).feasible;
+}
+
+/**
+ * Rank extra products you can add while keeping existing targets satisfied.
+ * Useful when capped inputs have remaining headroom after current goals.
+ */
+export function suggestExcessAutomatableItems(
+  base: PlannerConfig,
+  options: { limit?: number } = {},
+): ExcessSuggestionRow[] {
+  const limit = options.limit ?? 15;
+  const caps = base.rawCaps ?? {};
+  if (Object.keys(caps).length === 0) return [];
+  if (base.targets.length === 0) return [];
+  if (!solvePlan(base).feasible) return [];
+
+  const targetIds = new Set(base.targets.map((t) => t.itemId));
+  const reachable = itemsDownstreamOfCaps(base);
+
+  let candidates = allItems().filter((it) => {
+    if (it.isRaw || targetIds.has(it.id) || !reachable.has(it.id)) return false;
+    const producers = recipesProducing(it.id).filter(
+      (r) => r.inMachine && !r.forBuilding,
+    );
+    return producers.length > 0;
+  });
+  candidates.sort((a, b) => b.sinkPoints - a.sinkPoints);
+  if (candidates.length > 80) candidates = candidates.slice(0, 80);
+
+  const rows: ExcessSuggestionRow[] = [];
+  for (const it of candidates) {
+    if (!isFeasibleWithAdditionalRate(base, it.id, EPS)) continue;
+    let low = 0;
+    let high = 1;
+    while (
+      high < MAX_RATE &&
+      isFeasibleWithAdditionalRate(base, it.id, high)
+    ) {
+      low = high;
+      high *= 2;
+    }
+
+    if (!isFeasibleWithAdditionalRate(base, it.id, high)) {
+      for (let i = 0; i < BINARY_STEPS; i++) {
+        const mid = (low + high) / 2;
+        if (isFeasibleWithAdditionalRate(base, it.id, mid)) low = mid;
+        else high = mid;
+      }
+    } else {
+      low = high;
+    }
+
+    if (low > EPS) rows.push({ itemId: it.id, maxAdditionalRate: low });
+  }
+
+  rows.sort((a, b) => b.maxAdditionalRate - a.maxAdditionalRate);
   return rows.slice(0, limit);
 }

@@ -32,6 +32,7 @@ export function AltRecipeToggles({
 }: AltRecipeTogglesProps) {
   const toggle = usePlannerStore((s) => s.toggleAlternate);
   const enableAllAlternates = usePlannerStore((s) => s.enableAllAlternates);
+  const disableAllAlternates = usePlannerStore((s) => s.disableAllAlternates);
   const recipes = useMemo(() => knownAlternates(), []);
   const [query, setQuery] = useState("");
   const [onlyEnabled, setOnlyEnabled] = useState(false);
@@ -108,15 +109,26 @@ export function AltRecipeToggles({
       {bodyOpen && (
         <div id="alt-recipes-body" role="region" aria-labelledby="alt-recipes-toggle">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-surface-border px-3 py-2">
-            <button
-              type="button"
-              onClick={() => enableAllAlternates()}
-              disabled={recipes.length === 0 || allAlternatesEnabled}
-              className="btn text-xs disabled:pointer-events-none disabled:opacity-40"
-              title="Enable every alternate recipe for the solver"
-            >
-              Enable all
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => enableAllAlternates()}
+                disabled={recipes.length === 0 || allAlternatesEnabled}
+                className="btn text-xs disabled:pointer-events-none disabled:opacity-40"
+                title="Enable every alternate recipe for the solver"
+              >
+                Enable all
+              </button>
+              <button
+                type="button"
+                onClick={() => disableAllAlternates()}
+                disabled={enabled.length === 0}
+                className="btn text-xs disabled:pointer-events-none disabled:opacity-40"
+                title="Disable every alternate recipe for the solver"
+              >
+                Disable all
+              </button>
+            </div>
             <label className="flex min-h-9 cursor-pointer items-center gap-2 text-xs text-gray-400 touch-manipulation">
               <input
                 type="checkbox"
