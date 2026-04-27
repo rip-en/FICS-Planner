@@ -6,6 +6,8 @@ import { knownAlternates } from "@/lib/planner/solver";
 import type { PlannerConfig, PlannerTarget } from "@/lib/planner/types";
 import { DEFAULT_PLANNER_CONFIG } from "@/lib/planner/types";
 
+const EMPTY_TARGETS: PlannerTarget[] = [];
+
 export interface SavedPlan {
   id: string;
   name: string;
@@ -35,6 +37,14 @@ interface PlannerState {
   setRawCap: (itemId: string, ratePerMin: number | null) => void;
   /** Exclude a raw input from planner sourcing (or include it back). */
   setRawExcluded: (itemId: string, excluded: boolean) => void;
+  /** Mark any item as externally provided (already made elsewhere). */
+  setProvidedInput: (itemId: string, provided: boolean) => void;
+  /** Set custom alternate-recipe input multiplier (1 = default). */
+  setAlternateInputRatio: (recipeId: string, ratio: number) => void;
+  /**
+   * Limit planner to hub milestone recipes through this tier (undefined = no limit).
+   */
+  setMaxCompletedHubTier: (tier: number | undefined) => void;
   clearRawCaps: () => void;
   clearTargets: () => void;
   clearRecipeOverrides: () => void;
@@ -304,6 +314,64 @@ export const usePlannerStore = create<PlannerState>()(
           return { plans: { ...state.plans, [plan.id]: nextPlan } };
         }),
 
+      setProvidedInput: (itemId, provided) =>
+        set((state) => {
+          const plan = state.plans[state.activePlanId];
+          if (!plan) return {};
+          const nextProvided = new Set(plan.config.providedInputs ?? []);
+          if (provided) nextProvided.add(itemId);
+          else nextProvided.delete(itemId);
+          const nextPlan: SavedPlan = {
+            ...plan,
+            updatedAt: Date.now(),
+            config: {
+              ...plan.config,
+              providedInputs: nextProvided.size
+                ? Array.from(nextProvided)
+                : undefined,
+            },
+          };
+          return { plans: { ...state.plans, [plan.id]: nextPlan } };
+        }),
+
+      setAlternateInputRatio: (recipeId, ratio) =>
+        set((state) => {
+          const plan = state.plans[state.activePlanId];
+          if (!plan) return {};
+          const nextRatios = { ...(plan.config.alternateInputRatios ?? {}) };
+          if (!Number.isFinite(ratio) || ratio <= 0 || Math.abs(ratio - 1) < 1e-6) {
+            delete nextRatios[recipeId];
+          } else {
+            nextRatios[recipeId] = ratio;
+          }
+          const nextPlan: SavedPlan = {
+            ...plan,
+            updatedAt: Date.now(),
+            config: {
+              ...plan.config,
+              alternateInputRatios: Object.keys(nextRatios).length
+                ? nextRatios
+                : undefined,
+            },
+          };
+          return { plans: { ...state.plans, [plan.id]: nextPlan } };
+        }),
+
+      setMaxCompletedHubTier: (tier) =>
+        set((state) => {
+          const plan = state.plans[state.activePlanId];
+          if (!plan) return {};
+          const nextConfig = { ...plan.config };
+          if (tier === undefined) delete nextConfig.maxCompletedHubTier;
+          else nextConfig.maxCompletedHubTier = tier;
+          const nextPlan: SavedPlan = {
+            ...plan,
+            updatedAt: Date.now(),
+            config: nextConfig,
+          };
+          return { plans: { ...state.plans, [plan.id]: nextPlan } };
+        }),
+
       clearRawCaps: () =>
         set((state) => {
           const plan = state.plans[state.activePlanId];
@@ -371,6 +439,26 @@ export const usePlannerStore = create<PlannerState>()(
     {
       name: "factory:plans",
       version: 1,
+      merge: (persistedState, currentState) => {
+        const p = persistedState as Partial<PlannerState> | undefined;
+        if (!p || typeof p !== "object" || !p.plans) {
+          return currentState;
+        }
+        const mergedPlans: Record<string, SavedPlan> = { ...p.plans };
+        for (const key of Object.keys(mergedPlans)) {
+          const plan = mergedPlans[key];
+          if (!plan?.config) continue;
+          mergedPlans[key] = {
+            ...plan,
+            config: { ...DEFAULT_PLANNER_CONFIG, ...plan.config },
+          };
+        }
+        return {
+          ...currentState,
+          ...p,
+          plans: mergedPlans,
+        };
+      },
     },
   ),
 );
@@ -383,5 +471,5 @@ export const useActivePlan = () => {
 
 export const useActiveTargets = (): PlannerTarget[] => {
   const plan = usePlannerStore((s) => s.plans[s.activePlanId]);
-  return plan?.config.targets ?? [];
+  return plan?.config.targets ?? EMPTY_TARGETS;
 };

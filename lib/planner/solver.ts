@@ -6,7 +6,23 @@ import {
   items as itemsMap,
   recipesProducing,
 } from "@/lib/data";
+import type { Recipe } from "@/types/game";
+import { sortRecipeUsagesByProductionFlow } from "./production-flow";
 import type { PlannerConfig, SolverResult } from "./types";
+
+/** Hub tier is 0-based in dataset schematics (e.g. tier 9 = endgame). */
+export const HUB_TIER_MAX = 9;
+
+export function recipePassesHubMilestoneGate(
+  r: Recipe,
+  maxCompletedHubTier: number | undefined,
+): boolean {
+  if (maxCompletedHubTier === undefined) return true;
+  const u = r.unlockedBy;
+  if (u.source !== "milestone") return true;
+  if (u.tier === undefined) return true;
+  return u.tier <= maxCompletedHubTier;
+}
 
 interface RawModel {
   optimize: string;
@@ -16,6 +32,79 @@ interface RawModel {
 }
 
 const EPS = 1e-6;
+const BUILDING_OBJECTIVE_RAW_TIEBREAKER_COST = 1e-8;
+const BALANCE_TOL = 0.01;
+
+/**
+ * Scales alternate recipe ingredient draw when the user set a custom ratio.
+ * Used consistently in the LP, usage rows, and post-solve validation.
+ */
+export function alternateIngredientScale(
+  recipe: { id: string; alternate: boolean },
+  alternateInputRatios: Record<string, number> | undefined,
+): number {
+  if (
+    !recipe.alternate ||
+    !alternateInputRatios ||
+    !Number.isFinite(alternateInputRatios[recipe.id]!)
+  ) {
+    return 1;
+  }
+  return Math.max(alternateInputRatios[recipe.id]!, EPS);
+}
+
+function totalItemRateFromPlan(
+  result: SolverResult,
+  itemId: string,
+): number {
+  let b = 0;
+  for (const u of result.recipes) {
+    for (const o of u.outputs) {
+      if (o.itemId === itemId) b += o.ratePerMin;
+    }
+    for (const i of u.inputs) {
+      if (i.itemId === itemId) b -= i.ratePerMin;
+    }
+  }
+  b += result.rawInputs.find((r) => r.itemId === itemId)?.ratePerMin ?? 0;
+  b += result.providedInputs.find((r) => r.itemId === itemId)?.ratePerMin ?? 0;
+  return b;
+}
+
+/**
+ * Catches rare LP numeric drift or hand-off bugs (balance should always hold).
+ */
+function collectMaterialImbalanceErrors(
+  result: SolverResult,
+  config: PlannerConfig,
+  referenced: Set<string>,
+  targetMap: Map<string, number>,
+  available: Set<string>,
+  excludedRawInputs: Set<string>,
+): string[] {
+  const warn: string[] = [];
+  for (const itemId of referenced) {
+    if (excludedRawInputs.has(itemId)) {
+      const min = targetMap.get(itemId) ?? 0;
+      const b = totalItemRateFromPlan(result, itemId);
+      if (b < min - BALANCE_TOL) {
+        warn.push(
+          `Material check: "${itemId}" net rate ${b.toFixed(4)}/min is below required ${min} (internal solver check).`,
+        );
+      }
+      continue;
+    }
+    if (available.has(itemId) && !targetMap.has(itemId)) continue;
+    const min = targetMap.get(itemId) ?? 0;
+    const b = totalItemRateFromPlan(result, itemId);
+    if (b < min - BALANCE_TOL) {
+      warn.push(
+        `Material check: "${itemId}" net rate ${b.toFixed(4)}/min is below required ${min} (internal solver check).`,
+      );
+    }
+  }
+  return warn;
+}
 
 /**
  * Decide which recipes are candidates:
@@ -32,6 +121,9 @@ export function getActiveRecipesForPlanner(config: PlannerConfig) {
     if (!r.inMachine || r.forBuilding) return false;
     if (disabled.has(r.id)) return false;
     if (r.alternate && !enabled.has(r.id)) return false;
+    if (!recipePassesHubMilestoneGate(r, config.maxCompletedHubTier)) {
+      return false;
+    }
     if (
       r.products.some((p) => excludedRawInputs.has(p.item)) ||
       r.ingredients.some((i) => excludedRawInputs.has(i.item))
@@ -47,8 +139,9 @@ export function getActiveRecipesForPlanner(config: PlannerConfig) {
  *
  *  - `raw`: items that are actually extraction-only (raw resources) OR
  *    foraged/drop-only items that have no recipe anywhere in the data
- *    (Mycelia, Leaves, Wood, Power Shards, Hard Drives, ...). These are
- *    legitimate raw inputs and we show them in the Raw inputs panel.
+ *    (Mycelia, Leaves, Wood, Power Shards, Hard Drives, ...). Raw resources
+ *    stay here even if they have an optional machine line (e.g. SAM
+ *    reanimation) that you disabled—those remain raw inputs, not “missing”.
  *
  *  - `missing`: items that DO have production recipes in the game but every
  *    one of them is currently disabled/not-enabled in the user's plan. The
@@ -74,6 +167,7 @@ function buildAvailablePool(activeRecipeIds: Set<string>): AvailablePool {
     const producers = recipesProducing(id);
     const producedByActive = producers.some((r) => activeRecipeIds.has(r.id));
     if (producedByActive) continue;
+    if (itemsMap[id]?.isRaw) continue;
 
     // No active producer. Classify based on whether there's *any* machine
     // recipe for this item in the game at all.
@@ -97,12 +191,14 @@ export function solvePlan(config: PlannerConfig): SolverResult {
   const pool = buildAvailablePool(recipeIds);
   const available = pool.all;
   const targetMap = new Map(config.targets.map((t) => [t.itemId, t.rate]));
+  const providedInputs = new Set(config.providedInputs ?? []);
 
   if (config.targets.length === 0 || recipes.length === 0) {
     return {
       feasible: true,
       recipes: [],
       rawInputs: [],
+      providedInputs: [],
       byproducts: [],
       missingInputs: [],
       totalPowerMW: 0,
@@ -127,16 +223,27 @@ export function solvePlan(config: PlannerConfig): SolverResult {
     variables: {},
   };
   const excludedRawInputs = new Set(config.excludedRawInputs ?? []);
+  const alternateInputRatios = config.alternateInputRatios ?? {};
 
   // Constraint for each non-raw referenced item: net output >= target (or 0).
   for (const itemId of referenced) {
     if (excludedRawInputs.has(itemId)) {
-      model.constraints[itemId] = { equal: 0 };
+      // Banned raws: no `raw:item` source; require net from recipes (and
+      // provided) to meet targets / stay non-negative — never "equal: 0"
+      // (that forbids any surplus and breaks normal chains).
+      const target = targetMap.get(itemId) ?? 0;
+      model.constraints[itemId] = { min: target };
       continue;
     }
     if (available.has(itemId) && !targetMap.has(itemId)) continue;
     const target = targetMap.get(itemId) ?? 0;
     model.constraints[itemId] = { min: target };
+  }
+  for (const itemId of providedInputs) {
+    if (targetMap.has(itemId)) continue;
+    if (!referenced.has(itemId)) continue;
+    if (!model.constraints[itemId]) model.constraints[itemId] = { min: 0 };
+    model.variables[`provided:${itemId}`] = { [itemId]: 1, cost: 0 };
   }
 
   // One variable per active recipe; one extra variable per available item
@@ -148,8 +255,9 @@ export function solvePlan(config: PlannerConfig): SolverResult {
     for (const out of r.products) {
       v[out.item] = (v[out.item] ?? 0) + out.ratePerMin;
     }
+    const ingredientRatio = alternateIngredientScale(r, alternateInputRatios);
     for (const inp of r.ingredients) {
-      v[inp.item] = (v[inp.item] ?? 0) - inp.ratePerMin;
+      v[inp.item] = (v[inp.item] ?? 0) - inp.ratePerMin * ingredientRatio;
     }
     // cost: minimize building count (runs) or raw inputs.
     if (objective === "buildings") {
@@ -182,8 +290,13 @@ export function solvePlan(config: PlannerConfig): SolverResult {
     }
     if (isMissing) {
       v.cost = 1000; // discourage using blocked items unless unavoidable
+    } else if (objective === "raw") {
+      v.cost = 1;
     } else {
-      v.cost = objective === "raw" ? 1 : 0;
+      // For "buildings", keep building-count minimization as the primary goal,
+      // but use raw intake as a tiny tie-breaker so enabling an alternate does
+      // not implicitly force it when a lower-raw option exists at equal runs.
+      v.cost = BUILDING_OBJECTIVE_RAW_TIEBREAKER_COST;
     }
     model.variables[`raw:${itemId}`] = v;
   }
@@ -198,6 +311,7 @@ export function solvePlan(config: PlannerConfig): SolverResult {
       feasible: false,
       recipes: [],
       rawInputs: [],
+      providedInputs: [],
       byproducts: [],
       missingInputs: config.targets.map((t) => ({
         itemId: t.itemId,
@@ -220,6 +334,7 @@ export function solvePlan(config: PlannerConfig): SolverResult {
     if (runs <= EPS) continue;
     const building = getBuilding(r.producedIn[0] ?? "");
     const powerPerRun = r.maxPower > 0 ? r.maxPower : building?.powerConsumption ?? 0;
+    const ratio = alternateIngredientScale(r, alternateInputRatios);
     usage.push({
       recipeId: r.id,
       runs,
@@ -228,7 +343,7 @@ export function solvePlan(config: PlannerConfig): SolverResult {
       powerMW: runs * powerPerRun,
       inputs: r.ingredients.map((i) => ({
         itemId: i.item,
-        ratePerMin: i.ratePerMin * runs,
+        ratePerMin: i.ratePerMin * ratio * runs,
       })),
       outputs: r.products.map((p) => ({
         itemId: p.item,
@@ -236,11 +351,13 @@ export function solvePlan(config: PlannerConfig): SolverResult {
       })),
     });
     for (const p of r.products) net[p.item] = (net[p.item] ?? 0) + p.ratePerMin * runs;
-    for (const i of r.ingredients)
-      net[i.item] = (net[i.item] ?? 0) - i.ratePerMin * runs;
+    for (const i of r.ingredients) {
+      net[i.item] = (net[i.item] ?? 0) - i.ratePerMin * ratio * runs;
+    }
   }
 
   const rawInputs: SolverResult["rawInputs"] = [];
+  const providedInputUsage: SolverResult["providedInputs"] = [];
   const missingInputs: SolverResult["missingInputs"] = [];
   for (const itemId of Array.from(available)) {
     const raw = solved[`raw:${itemId}`] ?? 0;
@@ -250,6 +367,11 @@ export function solvePlan(config: PlannerConfig): SolverResult {
     } else {
       rawInputs.push({ itemId, ratePerMin: raw });
     }
+  }
+  for (const itemId of Array.from(referenced)) {
+    const provided = solved[`provided:${itemId}`] ?? 0;
+    if (provided <= EPS) continue;
+    providedInputUsage.push({ itemId, ratePerMin: provided });
   }
 
   const byproducts: SolverResult["byproducts"] = [];
@@ -267,12 +389,32 @@ export function solvePlan(config: PlannerConfig): SolverResult {
   const totalPowerMW = usage.reduce((s, u) => s + u.powerMW, 0);
   const totalBuildings = usage.reduce((s, u) => s + Math.ceil(u.buildings - EPS), 0);
 
-  usage.sort((a, b) => b.runs - a.runs);
+  const recipeUsagesOrdered = sortRecipeUsagesByProductionFlow(usage);
   rawInputs.sort((a, b) => b.ratePerMin - a.ratePerMin);
+  providedInputUsage.sort((a, b) => b.ratePerMin - a.ratePerMin);
   missingInputs.sort((a, b) => b.ratePerMin - a.ratePerMin);
   byproducts.sort((a, b) => b.ratePerMin - a.ratePerMin);
 
-  const errors: string[] = [];
+  const resultStub: SolverResult = {
+    feasible: true,
+    recipes: recipeUsagesOrdered,
+    rawInputs,
+    providedInputs: providedInputUsage,
+    byproducts,
+    missingInputs,
+    totalPowerMW,
+    totalBuildings,
+    errors: [],
+  };
+
+  const errors: string[] = collectMaterialImbalanceErrors(
+    resultStub,
+    config,
+    referenced,
+    targetMap,
+    available,
+    excludedRawInputs,
+  );
   if (missingInputs.length > 0) {
     errors.push(
       `${missingInputs.length} item(s) have all their recipes disabled - re-enable a recipe for each to close the loop.`,
@@ -280,13 +422,7 @@ export function solvePlan(config: PlannerConfig): SolverResult {
   }
 
   return {
-    feasible: true,
-    recipes: usage,
-    rawInputs,
-    byproducts,
-    missingInputs,
-    totalPowerMW,
-    totalBuildings,
+    ...resultStub,
     errors,
   };
 }

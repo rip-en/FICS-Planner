@@ -23,15 +23,18 @@ interface InventoryBudgetPanelProps {
   config: PlannerConfig;
   onInspect: (itemId: string) => void;
   onAddTargetAtRate?: (itemId: string, rate: number) => void;
+  hiddenSectionIds?: string[];
 }
 
 export function InventoryBudgetPanel({
   config,
   onInspect,
   onAddTargetAtRate,
+  hiddenSectionIds = [],
 }: InventoryBudgetPanelProps) {
   const setRawCap = usePlannerStore((s) => s.setRawCap);
   const setRawExcluded = usePlannerStore((s) => s.setRawExcluded);
+  const setProvidedInput = usePlannerStore((s) => s.setProvidedInput);
   const clearRawCaps = usePlannerStore((s) => s.clearRawCaps);
   const upsertTarget = usePlannerStore((s) => s.upsertTarget);
 
@@ -48,16 +51,29 @@ export function InventoryBudgetPanel({
       }),
     [rawItems],
   );
+  const allItemsFuse = useMemo(
+    () =>
+      new Fuse(allItems(), {
+        keys: ["name", "slug"],
+        threshold: 0.35,
+        ignoreLocation: true,
+      }),
+    [],
+  );
 
   const [addQuery, setAddQuery] = useState("");
   const [showAdd, setShowAdd] = useState(false);
-  const [addMode, setAddMode] = useState<"cap" | "exclude">("cap");
+  const [addMode, setAddMode] = useState<"cap" | "exclude" | "provided">("cap");
 
   const addHits = useMemo(() => {
+    const sourceItems = addMode === "provided" ? allItems() : rawItems;
     const q = addQuery.trim();
-    if (!q) return rawItems.slice(0, 12);
+    if (!q) return sourceItems.slice(0, 12);
+    if (addMode === "provided") {
+      return allItemsFuse.search(q).map((h) => h.item).slice(0, 12);
+    }
     return fuse.search(q).map((h) => h.item).slice(0, 12);
-  }, [addQuery, fuse, rawItems]);
+  }, [addMode, addQuery, allItemsFuse, fuse, rawItems]);
 
   const caps = useMemo(() => {
     const r = config.rawCaps;
@@ -78,6 +94,17 @@ export function InventoryBudgetPanel({
         (getItem(a)?.name ?? a).localeCompare(getItem(b)?.name ?? b),
       ),
     [excludedRawInputs],
+  );
+  const providedInputs = useMemo(
+    () => new Set(config.providedInputs ?? []),
+    [config.providedInputs],
+  );
+  const providedEntries = useMemo(
+    () =>
+      Array.from(providedInputs).sort((a, b) =>
+        (getItem(a)?.name ?? a).localeCompare(getItem(b)?.name ?? b),
+      ),
+    [providedInputs],
   );
 
   const [analyzeId, setAnalyzeId] = useState<string | null>(null);
@@ -100,20 +127,11 @@ export function InventoryBudgetPanel({
     [],
   );
 
-  const analyzeFuse = useMemo(
-    () =>
-      new Fuse(allItems(), {
-        keys: ["name", "slug"],
-        threshold: 0.35,
-        ignoreLocation: true,
-      }),
-    [],
-  );
   const analyzeHits = useMemo(() => {
     const q = analyzeQuery.trim();
     if (!q) return allItems().filter((it) => !it.isRaw).slice(0, 10);
-    return analyzeFuse.search(q).map((h) => h.item).filter((it) => !it.isRaw).slice(0, 10);
-  }, [analyzeQuery, analyzeFuse]);
+    return allItemsFuse.search(q).map((h) => h.item).filter((it) => !it.isRaw).slice(0, 10);
+  }, [analyzeQuery, allItemsFuse]);
 
   const [insight, setInsight] = useState<ReturnType<
     typeof maximizeTargetRate
@@ -126,20 +144,35 @@ export function InventoryBudgetPanel({
   >([]);
   const [excessStatus, setExcessStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState<"analyze" | "suggest" | "excess" | null>(null);
+  const hiddenSectionIdSet = useMemo(
+    () => new Set(hiddenSectionIds),
+    [hiddenSectionIds],
+  );
 
-  const handlePickRaw = useCallback(
+  const handlePickInput = useCallback(
     (itemId: string) => {
       if (addMode === "cap") {
         if (caps[itemId] !== undefined || excludedRawInputs.has(itemId)) return;
         setRawCap(itemId, 60);
-      } else {
+      } else if (addMode === "exclude") {
         if (excludedRawInputs.has(itemId)) return;
         setRawExcluded(itemId, true);
+      } else {
+        if (providedInputs.has(itemId)) return;
+        setProvidedInput(itemId, true);
       }
       setAddQuery("");
       setShowAdd(false);
     },
-    [addMode, caps, excludedRawInputs, setRawCap, setRawExcluded],
+    [
+      addMode,
+      caps,
+      excludedRawInputs,
+      providedInputs,
+      setProvidedInput,
+      setRawCap,
+      setRawExcluded,
+    ],
   );
 
   const runAnalyze = useCallback(() => {
@@ -202,12 +235,13 @@ export function InventoryBudgetPanel({
       </header>
 
       <div className="flex flex-col gap-3">
-        <CollapsibleSection
-          variant="panel"
-          title="Capped inputs"
-          defaultOpen
-          contentClassName="space-y-2"
-        >
+        {!hiddenSectionIdSet.has("capped-inputs") && (
+          <CollapsibleSection
+            variant="panel"
+            title="Capped inputs"
+            defaultOpen
+            contentClassName="space-y-2"
+          >
           {Object.keys(caps).length > 0 && (
             <div className="flex flex-wrap items-center justify-end gap-2">
               <button
@@ -328,7 +362,9 @@ export function InventoryBudgetPanel({
                 placeholder={
                   addMode === "cap"
                     ? "Coal, sulfur, oil…"
-                    : "Pick an input to exclude…"
+                    : addMode === "exclude"
+                      ? "Pick a raw input to exclude…"
+                      : "Pick an already-made input…"
                 }
                 size="sm"
                 className="flex-1"
@@ -350,17 +386,21 @@ export function InventoryBudgetPanel({
                 <li key={it.id}>
                   <button
                     type="button"
-                    onClick={() => handlePickRaw(it.id)}
+                    onClick={() => handlePickInput(it.id)}
                     disabled={
                       addMode === "cap"
                         ? caps[it.id] !== undefined || excludedRawInputs.has(it.id)
-                        : excludedRawInputs.has(it.id)
+                        : addMode === "exclude"
+                          ? excludedRawInputs.has(it.id)
+                          : providedInputs.has(it.id)
                     }
                     className={cn(
                       "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-surface-raised",
                       (addMode === "cap"
                         ? caps[it.id] !== undefined || excludedRawInputs.has(it.id)
-                        : excludedRawInputs.has(it.id)) &&
+                        : addMode === "exclude"
+                          ? excludedRawInputs.has(it.id)
+                          : providedInputs.has(it.id)) &&
                         "opacity-40",
                     )}
                   >
@@ -396,16 +436,65 @@ export function InventoryBudgetPanel({
               <X className="h-3.5 w-3.5" />
               Exclude input
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAddMode("provided");
+                setShowAdd(true);
+              }}
+              className="btn min-h-10 w-full touch-manipulation justify-center gap-1.5 text-xs sm:min-h-0 sm:col-span-2"
+              title="Mark an item as already-made and externally provided"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add already-made input
+            </button>
           </div>
         )}
-        </CollapsibleSection>
+        {providedEntries.length > 0 && (
+          <div className="mt-3 rounded-md border border-brand/40 bg-brand/5 p-2">
+            <p className="mb-2 text-xs text-brand/90">
+              Already-made inputs (planner will treat as provided):
+            </p>
+            <ul className="space-y-1.5">
+              {providedEntries.map((itemId) => {
+                const it = getItem(itemId);
+                if (!it) return null;
+                return (
+                  <li
+                    key={`provided-${itemId}`}
+                    className="flex items-center gap-2 rounded border border-brand/30 bg-surface p-1.5"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => onInspect(itemId)}
+                      className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                    >
+                      <ItemIcon iconUrl={it.iconUrl} alt={it.name} size={22} />
+                      <span className="truncate text-sm">{it.name}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setProvidedInput(itemId, false)}
+                      className="btn px-2 py-1 text-[11px]"
+                    >
+                      Include in plan
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+          </CollapsibleSection>
+        )}
 
-        <CollapsibleSection
-          variant="panel"
-          title="Target throughput"
-          defaultOpen
-          contentClassName="space-y-2"
-        >
+        {!hiddenSectionIdSet.has("target-throughput") && (
+          <CollapsibleSection
+            variant="panel"
+            title="Target throughput"
+            defaultOpen
+            contentClassName="space-y-2"
+          >
         <p className="flex items-start gap-2 text-xs text-gray-500">
           <LineChart
             className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gray-500"
@@ -545,14 +634,16 @@ export function InventoryBudgetPanel({
               )}
           </div>
         )}
-        </CollapsibleSection>
+          </CollapsibleSection>
+        )}
 
-        <CollapsibleSection
-          variant="panel"
-          title="Suggestions"
-          defaultOpen={false}
-          contentClassName="space-y-2"
-        >
+        {!hiddenSectionIdSet.has("suggestions") && (
+          <CollapsibleSection
+            variant="panel"
+            title="Suggestions"
+            defaultOpen={false}
+            contentClassName="space-y-2"
+          >
         <p className="flex items-start gap-2 text-xs text-gray-500">
           <Lightbulb
             className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gray-500"
@@ -678,7 +769,8 @@ export function InventoryBudgetPanel({
         {busy !== "excess" && excessStatus && (
           <p className="mt-2 text-xs text-amber-200/90">{excessStatus}</p>
         )}
-        </CollapsibleSection>
+          </CollapsibleSection>
+        )}
       </div>
     </div>
   );

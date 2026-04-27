@@ -12,12 +12,18 @@ import { cn } from "@/lib/utils";
 
 interface CatalogPanelProps {
   selectedItemId?: string;
+  /** When set, items not in this set are dimmed and cannot be added as targets. */
+  hubProducibleItemIds?: Set<string> | null;
+  /** True while feasibility is computed for hub-tier dimming (avoid false locks). */
+  hubTierScanPending?: boolean;
   onSelect: (itemId: string) => void;
   onAddTarget: (itemId: string) => void;
 }
 
 export function CatalogPanel({
   selectedItemId,
+  hubProducibleItemIds = null,
+  hubTierScanPending = false,
   onSelect,
   onAddTarget,
 }: CatalogPanelProps) {
@@ -84,6 +90,11 @@ export function CatalogPanel({
           {filtered.length} / {items.length}
         </div>
       </div>
+      {hubTierScanPending && (
+        <p className="mx-3 mb-2 rounded-md border border-brand/20 bg-brand/5 px-2 py-1.5 text-[11px] leading-snug text-gray-400">
+          Checking hub-tier reachability for the item list…
+        </p>
+      )}
       <div className="px-3 pb-2">
         <SearchInput
           ref={searchRef}
@@ -117,6 +128,11 @@ export function CatalogPanel({
             key={item.id}
             item={item}
             active={selectedItemId === item.id}
+            lockedByProgress={
+              !hubTierScanPending &&
+              hubProducibleItemIds != null &&
+              !hubProducibleItemIds.has(item.id)
+            }
             onSelect={onSelect}
             onAddTarget={onAddTarget}
           />

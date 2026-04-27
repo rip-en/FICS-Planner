@@ -31,6 +31,7 @@ export function CollapsibleSection({
   return (
     <section
       className={cn(
+        "min-w-0",
         isPanel &&
           "rounded-lg border border-surface-border bg-surface-raised/80",
         className,

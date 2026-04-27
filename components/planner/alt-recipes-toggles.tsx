@@ -15,6 +15,7 @@ import type { RecipeUnlockSource } from "@/types/game";
 interface AltRecipeTogglesProps {
   enabled: string[];
   recipesInUse: string[];
+  alternateInputRatios: Record<string, number>;
 }
 
 type SourceFilter = "all" | RecipeUnlockSource;
@@ -29,8 +30,10 @@ const SOURCE_CHOICES: Array<{ id: SourceFilter; label: string }> = [
 export function AltRecipeToggles({
   enabled,
   recipesInUse,
+  alternateInputRatios,
 }: AltRecipeTogglesProps) {
   const toggle = usePlannerStore((s) => s.toggleAlternate);
+  const setAlternateInputRatio = usePlannerStore((s) => s.setAlternateInputRatio);
   const enableAllAlternates = usePlannerStore((s) => s.enableAllAlternates);
   const disableAllAlternates = usePlannerStore((s) => s.disableAllAlternates);
   const recipes = useMemo(() => knownAlternates(), []);
@@ -225,6 +228,23 @@ export function AltRecipeToggles({
                     <span className="hidden pl-7 text-[11px] text-gray-500 sm:inline sm:pl-0">
                       {building.name}
                     </span>
+                  )}
+                  {active && (
+                    <label className="ml-auto flex items-center gap-1.5 pl-7 text-[11px] text-gray-400 sm:pl-0">
+                      <span>Input ratio</span>
+                      <input
+                        type="number"
+                        min={0.1}
+                        step={0.05}
+                        value={alternateInputRatios[r.id] ?? 1}
+                        onChange={(e) =>
+                          setAlternateInputRatio(r.id, Number(e.target.value))
+                        }
+                        className="input num w-20 px-2 py-1 text-right"
+                        title="Multiplier for this alternate recipe's ingredient costs"
+                      />
+                      <span className="text-gray-500">x</span>
+                    </label>
                   )}
                 </li>
               );

@@ -17,6 +17,7 @@ export interface SolverResult {
   feasible: boolean;
   recipes: RecipeUsage[];
   rawInputs: Array<{ itemId: string; ratePerMin: number }>;
+  providedInputs: Array<{ itemId: string; ratePerMin: number }>;
   byproducts: Array<{ itemId: string; ratePerMin: number }>;
   missingInputs: Array<{ itemId: string; ratePerMin: number }>;
   totalPowerMW: number;
@@ -39,6 +40,21 @@ export interface PlannerConfig {
    * Useful for banning resources you do not want in this factory.
    */
   excludedRawInputs?: string[];
+  /**
+   * Inputs you already make elsewhere and want treated as free in this plan.
+   * Unlike excluded raws, these can be any item (intermediate or raw).
+   */
+  providedInputs?: string[];
+  /**
+   * Per-alternate input multipliers (1 = default recipe values).
+   * Lets you experiment with custom alternate ingredient ratios.
+   */
+  alternateInputRatios?: Record<string, number>;
+  /**
+   * Highest hub (milestone) tier you have completed. When set, machine recipes
+   * unlocked only at a higher milestone tier are excluded from the planner.
+   */
+  maxCompletedHubTier?: number;
 }
 
 export const DEFAULT_PLANNER_CONFIG: PlannerConfig = {
@@ -48,4 +64,6 @@ export const DEFAULT_PLANNER_CONFIG: PlannerConfig = {
   objective: "buildings",
   rawCaps: undefined,
   excludedRawInputs: undefined,
+  providedInputs: undefined,
+  alternateInputRatios: undefined,
 };

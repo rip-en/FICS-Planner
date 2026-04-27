@@ -2,14 +2,20 @@
 
 import {
   Check,
+  Eye,
   Download,
   Plus as PlusIcon,
   RotateCcw,
   Trash2,
   Upload,
 } from "lucide-react";
-import { useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { APP_NAME } from "@/lib/brand";
+import {
+  PLAN_IMPORT_MAX_FILE_BYTES,
+  validatePlanImportJson,
+} from "@/lib/plan-import";
+import { HUB_TIER_MAX } from "@/lib/planner/solver";
 import { usePlannerStore, type SavedPlan } from "@/lib/store/planner-store";
 import type { PlannerConfig } from "@/lib/planner/types";
 
@@ -19,7 +25,22 @@ interface ExportShape {
   activePlanId: string;
 }
 
-export function PlanToolbar() {
+export interface PlannerSectionSetting {
+  id: string;
+  label: string;
+}
+
+interface PlanToolbarProps {
+  sectionSettings?: PlannerSectionSetting[];
+  hiddenSectionIds?: string[];
+  onToggleSectionVisibility?: (sectionId: string) => void;
+}
+
+export function PlanToolbar({
+  sectionSettings = [],
+  hiddenSectionIds = [],
+  onToggleSectionVisibility,
+}: PlanToolbarProps) {
   const plans = usePlannerStore((s) => s.plans);
   const activePlanId = usePlannerStore((s) => s.activePlanId);
   const rename = usePlannerStore((s) => s.renamePlan);
@@ -27,13 +48,41 @@ export function PlanToolbar() {
   const switchPlan = usePlannerStore((s) => s.switchPlan);
   const deletePlan = usePlannerStore((s) => s.deletePlan);
   const setObjective = usePlannerStore((s) => s.setObjective);
+  const setMaxCompletedHubTier = usePlannerStore((s) => s.setMaxCompletedHubTier);
   const replacePlans = usePlannerStore((s) => s.replacePlans);
   const clearRecipeOverrides = usePlannerStore((s) => s.clearRecipeOverrides);
   const plan = plans[activePlanId];
   const overrideCount =
     (plan?.config.enabledAlternates.length ?? 0) +
     (plan?.config.disabledRecipes.length ?? 0);
+  const hiddenSectionIdSet = useMemo(
+    () => new Set(hiddenSectionIds),
+    [hiddenSectionIds],
+  );
+  const hiddenCount = hiddenSectionIds.length;
+  const [isSectionsMenuOpen, setIsSectionsMenuOpen] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const sectionsMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isSectionsMenuOpen) return;
+    const onPointerDown = (e: MouseEvent) => {
+      const el = sectionsMenuRef.current;
+      if (el && !el.contains(e.target as Node)) {
+        setIsSectionsMenuOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setIsSectionsMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [isSectionsMenuOpen]);
 
   if (!plan) return null;
 
@@ -55,20 +104,23 @@ export function PlanToolbar() {
   };
 
   const handleImport = async (file: File) => {
+    setImportError(null);
+    if (file.size > PLAN_IMPORT_MAX_FILE_BYTES) {
+      setImportError(
+        `That file is too large (max ${Math.round(PLAN_IMPORT_MAX_FILE_BYTES / 1024)} KB).`,
+      );
+      return;
+    }
     try {
       const text = await file.text();
-      const parsed = JSON.parse(text) as ExportShape;
-      if (!parsed.plans || typeof parsed.plans !== "object") {
-        throw new Error("bad file");
+      const result = validatePlanImportJson(text);
+      if (!result.ok) {
+        setImportError(result.error);
+        return;
       }
-      const planIds = Object.keys(parsed.plans);
-      if (planIds.length === 0) throw new Error("bad file");
-      const activePlanId = parsed.plans[parsed.activePlanId]
-        ? parsed.activePlanId
-        : planIds[0];
-      replacePlans(parsed.plans, activePlanId);
+      replacePlans(result.data.plans, result.data.activePlanId);
     } catch {
-      alert("Could not import that file.");
+      setImportError("Could not read that file.");
     }
   };
 
@@ -77,7 +129,23 @@ export function PlanToolbar() {
   );
 
   return (
-    <div className="card flex flex-col gap-2 p-2 lg:flex-row lg:items-center">
+    <div className="card flex flex-col gap-2 p-2 lg:flex-row lg:flex-wrap lg:items-center">
+      {importError && (
+        <div
+          className="flex w-full basis-full items-start justify-between gap-2 rounded-md border border-red-500/40 bg-red-500/10 px-2 py-1.5 text-xs text-red-200"
+          role="alert"
+        >
+          <span>{importError}</span>
+          <button
+            type="button"
+            className="shrink-0 rounded px-1 text-red-100/90 hover:bg-red-500/20"
+            onClick={() => setImportError(null)}
+            aria-label="Dismiss import error"
+          >
+            ×
+          </button>
+        </div>
+      )}
       <div className="flex min-w-0 flex-1 items-center gap-2">
         <select
           value={activePlanId}
@@ -105,6 +173,34 @@ export function PlanToolbar() {
       </div>
 
       <div className="flex flex-wrap items-center gap-1.5">
+        <label className="flex max-w-[11rem] flex-col gap-0.5 text-xs text-gray-400 sm:max-w-none">
+          <span className="hidden sm:inline">Hub tier done</span>
+          <span className="text-[10px] leading-tight text-gray-500 sm:hidden">
+            Hub tier
+          </span>
+          <select
+            value={plan.config.maxCompletedHubTier ?? ""}
+            onChange={(e) => {
+              const v = e.target.value;
+              setMaxCompletedHubTier(
+                v === "" ? undefined : Math.min(
+                  HUB_TIER_MAX,
+                  Math.max(0, Math.floor(Number(v))),
+                ),
+              );
+            }}
+            className="input w-full min-w-0 sm:w-auto"
+            title="Milestone recipes from higher hub tiers are disabled; items you cannot build yet are dimmed in the catalog"
+            aria-label="Highest completed hub tier for milestone gating"
+          >
+            <option value="">No limit</option>
+            {Array.from({ length: HUB_TIER_MAX + 1 }, (_, i) => (
+              <option key={i} value={i}>
+                Through tier {i}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="flex items-center gap-1 text-xs text-gray-400">
           <span className="hidden sm:inline">Optimize</span>
           <select
@@ -137,6 +233,54 @@ export function PlanToolbar() {
             Reset ({overrideCount})
           </button>
         )}
+        {sectionSettings.length > 0 && (
+          <div className="relative" ref={sectionsMenuRef}>
+            <button
+              type="button"
+              onClick={() => setIsSectionsMenuOpen((isOpen) => !isOpen)}
+              className="btn"
+              title="Filter visible planner sections"
+              aria-expanded={isSectionsMenuOpen}
+              aria-controls="section-visibility-menu"
+            >
+              <Eye className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">
+                Sections
+                {hiddenCount > 0 ? ` (${hiddenCount} hidden)` : ""}
+              </span>
+            </button>
+            {isSectionsMenuOpen && (
+              <div
+                id="section-visibility-menu"
+                className="absolute right-0 z-20 mt-1 w-56 rounded-md border border-surface-border bg-surface-raised p-2 shadow-lg"
+              >
+                <p className="mb-2 text-[11px] uppercase tracking-wider text-gray-500">
+                  Show sections
+                </p>
+                <div className="space-y-1">
+                  {sectionSettings.map((section) => {
+                    const isVisible = !hiddenSectionIdSet.has(section.id);
+                    return (
+                      <label
+                        key={section.id}
+                        className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-surface"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isVisible}
+                          onChange={() =>
+                            onToggleSectionVisibility?.(section.id)
+                          }
+                        />
+                        <span>{section.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         <button
           type="button"
           onClick={() => newPlan()}
@@ -157,7 +301,10 @@ export function PlanToolbar() {
         </button>
         <button
           type="button"
-          onClick={() => fileInputRef.current?.click()}
+          onClick={() => {
+            setImportError(null);
+            fileInputRef.current?.click();
+          }}
           className="btn"
           title="Import plans JSON"
         >

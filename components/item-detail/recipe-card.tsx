@@ -1,6 +1,14 @@
 "use client";
 
-import { ArrowRight, Ban, Check, CircleSlash, Plus, Target } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowRight,
+  Ban,
+  Check,
+  CircleSlash,
+  Plus,
+  Target,
+} from "lucide-react";
 import { getBuilding, getItem } from "@/lib/data";
 import { cn, formatRate } from "@/lib/utils";
 import { ItemIcon } from "@/components/item-icon";
@@ -24,6 +32,16 @@ interface RecipeCardProps {
   /** True when >=2 recipes produce the same primary product; unlocks the
    * "use only this" button. */
   hasCompetitors?: boolean;
+  /** Items treated as externally provided in this planner config. */
+  providedInputSet?: Set<string>;
+  /** Toggle an ingredient as externally provided for this plan. */
+  onToggleProvidedInput?: (itemId: string, provided: boolean) => void;
+  /** Optional alternate production percentage (100 = default). */
+  productionPercent?: number;
+  /** Set alternate production percentage. */
+  onSetProductionPercent?: (percent: number) => void;
+  /** When set, the ingredient row for this item is visually emphasized. */
+  emphasizeItemId?: string;
 }
 
 const SOURCE_LABELS: Record<RecipeUnlockSource, string> = {
@@ -95,28 +113,78 @@ function StatusChip({
 function IngredientRow({
   ing,
   onItemClick,
+  isProvided,
+  onToggleProvided,
+  rateMultiplier = 1,
+  rowLabel,
+  emphasized,
 }: {
   ing: RecipeIngredient;
   onItemClick?: (itemId: string) => void;
+  isProvided?: boolean;
+  onToggleProvided?: (itemId: string, provided: boolean) => void;
+  rateMultiplier?: number;
+  rowLabel?: string;
+  emphasized?: boolean;
 }) {
   const item = getItem(ing.item);
   if (!item) return null;
   return (
-    <button
-      type="button"
-      onClick={() => onItemClick?.(item.id)}
-      className="flex w-full items-center gap-2 rounded-md border border-surface-border bg-surface px-2 py-1 text-left transition hover:border-brand/60"
+    <div
+      className={cn(
+        "flex w-full min-w-0 overflow-hidden rounded-md border",
+        emphasized
+          ? "border-brand/50 ring-1 ring-brand/30"
+          : "border-surface-border",
+      )}
     >
-      <ItemIcon iconUrl={item.iconUrl} alt={item.name} size={24} />
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-xs font-medium">
-          {ing.amount}x {item.name}
+      <button
+        type="button"
+        onClick={() => onItemClick?.(item.id)}
+        className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left transition hover:bg-surface-raised/80"
+      >
+        <ItemIcon
+          className="shrink-0"
+          iconUrl={item.iconUrl}
+          alt={item.name}
+          size={24}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-xs font-medium" title={item.name}>
+            {ing.amount}x {item.name}
+          </div>
+          <div className="truncate text-[11px] text-gray-500">
+            {formatRate(ing.ratePerMin * rateMultiplier)} /min
+          </div>
         </div>
-        <div className="text-[11px] text-gray-500">
-          {formatRate(ing.ratePerMin)} /min
-        </div>
-      </div>
-    </button>
+      </button>
+      {onToggleProvided && (
+        <label
+          className={cn(
+            "flex w-[2.75rem] shrink-0 cursor-pointer select-none flex-col items-center justify-center gap-0.5 border-l px-1.5 py-1.5 text-center text-[9px] font-semibold uppercase leading-tight tracking-wide sm:w-[3rem] sm:px-2",
+            isProvided
+              ? "border-brand/35 bg-brand/10 text-brand"
+              : "border-surface-border bg-surface-raised/50 text-gray-500 hover:bg-surface-raised",
+          )}
+          title="Treat as already supplied (omit from the build)"
+        >
+          <input
+            type="checkbox"
+            checked={Boolean(isProvided)}
+            onChange={(event) => onToggleProvided(item.id, event.target.checked)}
+            className="h-3.5 w-3.5 accent-brand"
+            aria-label={`${isProvided ? "Include" : "Omit"} ${item.name} in this plan`}
+          />
+          <span
+            className={cn(
+              isProvided ? "text-brand/80" : "text-gray-400",
+            )}
+          >
+            {rowLabel ?? "Omit"}
+          </span>
+        </label>
+      )}
+    </div>
   );
 }
 
@@ -130,6 +198,11 @@ export function RecipeCard({
   disabled,
   inUse,
   hasCompetitors,
+  providedInputSet,
+  onToggleProvidedInput,
+  productionPercent,
+  onSetProductionPercent,
+  emphasizeItemId,
 }: RecipeCardProps) {
   const building =
     recipe.producedIn.length > 0 ? getBuilding(recipe.producedIn[0]) : undefined;
@@ -140,15 +213,17 @@ export function RecipeCard({
   return (
     <div
       className={cn(
-        "card p-3",
+        "@container card max-w-full min-w-0 p-2.5 sm:p-3",
         enabled && !disabled && "border-brand/40 bg-brand/5",
         inUse && "ring-1 ring-brand/40",
         disabled && "border-red-500/30 bg-red-500/5 opacity-70",
       )}
     >
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="text-sm font-semibold">{recipe.name}</div>
+      <div className="mb-2 flex min-w-0 flex-col gap-2 @[24rem]:flex-row @[24rem]:items-start @[24rem]:justify-between">
+        <div className="min-w-0 flex flex-1 flex-wrap items-center gap-x-1.5 gap-y-1">
+          <div className="min-w-0 break-words text-sm font-semibold">
+            {recipe.name}
+          </div>
           {recipe.alternate && (
             <span className="chip border-brand/60 text-brand">Alt</span>
           )}
@@ -161,39 +236,56 @@ export function RecipeCard({
           />
         </div>
         {building && (
-          <div className="flex items-center gap-1.5 text-xs text-gray-400">
+          <div className="flex min-w-0 max-w-full shrink-0 items-center gap-1.5 text-xs text-gray-400 @[24rem]:max-w-[11rem]">
             <ItemIcon
+              className="shrink-0"
               iconUrl={building.iconUrl}
               alt={building.name}
               size={18}
             />
-            <span>{building.name}</span>
+            <span className="min-w-0 truncate" title={building.name}>
+              {building.name}
+            </span>
           </div>
         )}
       </div>
-      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-        <div className="space-y-1">
+      <div className="grid w-full min-w-0 grid-cols-1 items-center gap-y-2 @[22rem]:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] @[22rem]:items-start @[22rem]:gap-x-2 @[22rem]:gap-y-0">
+        <div className="min-w-0 space-y-1">
           {recipe.ingredients.map((ing, idx) => (
             <IngredientRow
               key={`${ing.item}-${idx}`}
               ing={ing}
               onItemClick={onItemClick}
+              isProvided={providedInputSet?.has(ing.item)}
+              onToggleProvided={onToggleProvidedInput}
+              rowLabel="Omit"
+              rateMultiplier={recipe.alternate ? (productionPercent ?? 100) / 100 : 1}
+              emphasized={Boolean(
+                emphasizeItemId && ing.item === emphasizeItemId,
+              )}
             />
           ))}
         </div>
-        <ArrowRight className="h-4 w-4 text-gray-500" aria-hidden />
-        <div className="space-y-1">
+        <div
+          className="flex min-h-6 justify-center @[22rem]:min-h-0 @[22rem]:pt-1 @[22rem]:self-stretch"
+          aria-hidden
+        >
+          <ArrowDown className="h-4 w-4 text-gray-500 @[22rem]:hidden" />
+          <ArrowRight className="hidden h-4 w-4 shrink-0 self-center text-gray-500 @[22rem]:block" />
+        </div>
+        <div className="min-w-0 space-y-1">
           {recipe.products.map((p, idx) => (
             <IngredientRow
               key={`${p.item}-${idx}`}
               ing={p}
               onItemClick={onItemClick}
+              rateMultiplier={recipe.alternate ? (productionPercent ?? 100) / 100 : 1}
             />
           ))}
         </div>
       </div>
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-gray-500">
-        <div className="flex items-center gap-3">
+      <div className="mt-2 flex min-w-0 flex-col gap-2 text-[11px] text-gray-500 @[32rem]:flex-row @[32rem]:flex-wrap @[32rem]:items-center @[32rem]:justify-between">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1.5">
           <span>Duration: {recipe.duration}s</span>
           {recipe.maxPower > 0 && (
             <span>
@@ -203,8 +295,25 @@ export function RecipeCard({
                 : `${recipe.minPower}-${recipe.maxPower} MW`}
             </span>
           )}
+          {recipe.alternate && onSetProductionPercent && (
+            <label className="flex items-center gap-1.5">
+              <span>Preview %</span>
+              <input
+                type="number"
+                min={10}
+                max={300}
+                step={5}
+                value={Math.max(10, Math.min(300, productionPercent ?? 100))}
+                onChange={(event) =>
+                  onSetProductionPercent(Number(event.target.value))
+                }
+                className="input num w-16 px-1.5 py-0.5 text-right text-[11px]"
+                title="Preview alternate throughput without changing planner settings"
+              />
+            </label>
+          )}
         </div>
-        <div className="flex flex-wrap items-center gap-1">
+        <div className="flex min-w-0 flex-wrap items-center gap-1">
           {canToggleAlternate && !disabled && (
             <button
               type="button"

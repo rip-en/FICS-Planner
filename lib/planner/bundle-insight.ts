@@ -1,4 +1,5 @@
 import { recipesProducing } from "@/lib/data";
+import type { Recipe } from "@/types/game";
 import { getActiveRecipesForPlanner, solvePlan } from "@/lib/planner/solver";
 import type {
   PlannerConfig,
@@ -13,7 +14,23 @@ const BELT_SNAP_ITERS = 48;
 /** Default Satisfactory belt “nice” step in items/min (Mk.1 = 60). */
 export const DEFAULT_BELT_SNAP_STEP_PER_MIN = 60;
 
-/** Output items/min for one recipe run (prefers non-alternate among active producers). */
+/** Order producers for bundle scaling: standard recipes first, then higher output/min for this item. */
+export function sortProducersForBundleItem(
+  producers: Recipe[],
+  itemId: string,
+): Recipe[] {
+  return [...producers].sort((a, b) => {
+    const aAlt = a.alternate ? 1 : 0;
+    const bAlt = b.alternate ? 1 : 0;
+    if (aAlt !== bAlt) return aAlt - bAlt;
+    const ra = a.products.find((x) => x.item === itemId)?.ratePerMin ?? 0;
+    const rb = b.products.find((x) => x.item === itemId)?.ratePerMin ?? 0;
+    if (rb !== ra) return rb - ra;
+    return a.id.localeCompare(b.id);
+  });
+}
+
+/** Output items/min for one recipe run among currently active planner recipes. */
 export function defaultActiveRecipeOutputRate(
   config: PlannerConfig,
   itemId: string,
@@ -23,7 +40,7 @@ export function defaultActiveRecipeOutputRate(
   );
   const producers = recipesProducing(itemId).filter((r) => activeIds.has(r.id));
   if (producers.length === 0) return 60;
-  const preferred = producers.find((r) => !r.alternate) ?? producers[0];
+  const preferred = sortProducersForBundleItem(producers, itemId)[0]!;
   const p = preferred.products.find((x) => x.item === itemId);
   const rate = p?.ratePerMin ?? 0;
   return rate > EPS ? rate : 60;
@@ -331,8 +348,12 @@ export function suggestBundleBeltSnapRates(
 }
 
 const NICE_RAW_STEPS_PER_MIN = [180, 120, 100, 60, 50, 30] as const;
-const NICE_OUTPUT_STEP_PER_MIN = 0.5;
-const PERFECT_SEARCH_POINTS = 24;
+/** How strongly total byproduct rate (excess) factors vs. “nice” rate penalties. */
+const PERFECT_EXCESS_WEIGHT = 0.1;
+const PERFECT_SEARCH_POINTS = 32;
+/** When the bundle has no raw-cap ceiling, search this multiplicative band around scale 1. */
+const PERFECT_UNBOUNDED_MIN_SCALE = 0.15;
+const PERFECT_UNBOUNDED_MAX_SCALE = 12;
 
 function nearestStepDistance(value: number, step: number): number {
   if (value <= EPS || step <= EPS) return 0;
@@ -356,29 +377,41 @@ function perfectScoreForScale(
   baseRates: number[],
   scale: number,
 ): number | null {
-  const plan = solvePlan(jointConfig(base, itemIds, scale, baseRates));
+  // Match the path users apply (“raw” objective) so rates reflect the same solve.
+  const plan = solvePlan({
+    ...base,
+    objective: "raw",
+    targets: itemIds.map((id, i) => ({
+      itemId: id,
+      rate: scale * (baseRates[i] ?? 1),
+    })),
+  });
   if (!plan.feasible) return null;
 
   const rawPenalty = plan.rawInputs.reduce(
     (sum, row) => sum + niceNumberPenalty(row.ratePerMin),
     0,
   );
-  const byproductPenalty = plan.byproducts.reduce(
-    (sum, row) => sum + niceNumberPenalty(row.ratePerMin),
+  const outputPenalty = itemIds.reduce((sum, _, idx) => {
+    const outputRate = scale * (baseRates[idx] ?? 1);
+    return sum + niceNumberPenalty(outputRate);
+  }, 0);
+  const excessPenalty = plan.byproducts.reduce(
+    (sum, row) => sum + row.ratePerMin,
     0,
   );
-  const outputPenalty = itemIds.reduce((sum, itemId, idx) => {
-    const outputRate = scale * (baseRates[idx] ?? 1);
-    return sum + nearestStepDistance(outputRate, NICE_OUTPUT_STEP_PER_MIN);
-  }, 0);
 
-  // Prefer cleaner raw/byproduct rates, then cleaner output increments.
-  return rawPenalty + byproductPenalty * 0.8 + outputPenalty * 0.35;
+  return (
+    rawPenalty +
+    outputPenalty +
+    excessPenalty * PERFECT_EXCESS_WEIGHT
+  );
 }
 
 /**
- * Suggest a bundle scale that favors "clean" raw inputs/byproducts
- * (e.g. 180/120/100/60/50/30 per min) while allowing decimal machine runs.
+ * Suggest a bundle scale where raw draw and bundle targets both sit near
+ * “nice” throughput steps (180/120/100/60/50/30 per min), using a raw-objective
+ * solve and preferring scales with less total byproduct (excess) flow.
  */
 export function suggestBundlePerfectRates(
   base: PlannerConfig,
@@ -390,8 +423,15 @@ export function suggestBundlePerfectRates(
   const baseRates = unique.map((id) => defaultActiveRecipeOutputRate(base, id));
   const bound = suggestBundleTargetRates(base, unique);
 
-  const upper = bound.unbounded ? 3 : Math.max(bound.scale, EPS);
-  const lower = Math.min(upper, upper * 0.1);
+  let upper: number;
+  let lower: number;
+  if (bound.unbounded) {
+    upper = PERFECT_UNBOUNDED_MAX_SCALE;
+    lower = PERFECT_UNBOUNDED_MIN_SCALE;
+  } else {
+    upper = Math.max(bound.scale, EPS);
+    lower = Math.max(EPS, Math.min(upper * 0.02, upper * 0.1));
+  }
   if (upper <= EPS) return null;
 
   let bestScale = Math.max(EPS, bound.scale > EPS ? bound.scale : 1);
@@ -402,6 +442,9 @@ export function suggestBundlePerfectRates(
     1,
     upper,
     lower,
+    0.5,
+    2,
+    4,
   ]);
   for (let i = 0; i <= PERFECT_SEARCH_POINTS; i++) {
     const t = i / PERFECT_SEARCH_POINTS;
@@ -409,6 +452,7 @@ export function suggestBundlePerfectRates(
   }
 
   for (const scale of candidates) {
+    if (scale < EPS || scale > upper + EPS) continue;
     const score = perfectScoreForScale(base, unique, baseRates, scale);
     if (score === null) continue;
     if (score < bestScore) {

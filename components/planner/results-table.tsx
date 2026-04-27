@@ -6,16 +6,42 @@ import { getBuilding, getItem, getRecipe } from "@/lib/data";
 import { buildProductionFlowEdges } from "@/lib/planner/production-flow";
 import type { SolverResult } from "@/lib/planner/types";
 import { CollapsibleSection } from "@/components/ui/collapsible-section";
-import { cn, formatPower, formatRate } from "@/lib/utils";
+import {
+  cn,
+  formatBuildingsCount,
+  formatPower,
+  formatRate,
+} from "@/lib/utils";
 import { ItemIcon } from "@/components/item-icon";
 
 interface ResultsTableProps {
   result: SolverResult;
   onInspect: (itemId: string) => void;
+  providedInputs: string[];
+  onToggleProvidedInput: (itemId: string, provided: boolean) => void;
+  hiddenSectionIds?: string[];
 }
 
-export function ResultsTable({ result, onInspect }: ResultsTableProps) {
+export function ResultsTable({
+  result,
+  onInspect,
+  providedInputs,
+  onToggleProvidedInput,
+  hiddenSectionIds = [],
+}: ResultsTableProps) {
   const flowEdges = useMemo(() => buildProductionFlowEdges(result), [result]);
+  const fractionalBuildingsTotal = useMemo(
+    () => result.recipes.reduce((s, u) => s + u.buildings, 0),
+    [result.recipes],
+  );
+  const providedInputSet = useMemo(
+    () => new Set(providedInputs),
+    [providedInputs],
+  );
+  const hiddenSectionIdSet = useMemo(
+    () => new Set(hiddenSectionIds),
+    [hiddenSectionIds],
+  );
 
   if (!result.feasible) {
     return (
@@ -39,45 +65,53 @@ export function ResultsTable({ result, onInspect }: ResultsTableProps) {
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <SummaryCard
-          icon={<Factory className="h-4 w-4" />}
-          label="Buildings"
-          value={String(result.totalBuildings)}
-          hint={`${result.recipes.length} recipes`}
-        />
-        <SummaryCard
-          icon={<Zap className="h-4 w-4" />}
-          label="Power"
-          value={formatPower(result.totalPowerMW)}
-        />
-        <SummaryCard
-          icon={<Flame className="h-4 w-4" />}
-          label="Raw inputs"
-          value={String(result.rawInputs.length)}
-          hint={
-            result.rawInputs
-              .slice(0, 2)
-              .map((r) => getItem(r.itemId)?.name)
-              .filter(Boolean)
-              .join(", ") || undefined
-          }
-        />
-        <SummaryCard
-          icon={<Gauge className="h-4 w-4" />}
-          label="Byproducts"
-          value={String(result.byproducts.length)}
-          warn={result.byproducts.length > 0}
-        />
-      </div>
+      {!hiddenSectionIdSet.has("summary-cards") && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <SummaryCard
+            icon={<Factory className="h-4 w-4" />}
+            label="Buildings"
+            value={formatBuildingsCount(fractionalBuildingsTotal)}
+            hint={`${result.recipes.length} recipes · Σ fractional machines (100% clock)`}
+          />
+          <SummaryCard
+            icon={<Zap className="h-4 w-4" />}
+            label="Power"
+            value={formatPower(result.totalPowerMW)}
+          />
+          <SummaryCard
+            icon={<Flame className="h-4 w-4" />}
+            label="External inputs"
+            value={String(result.rawInputs.length + result.providedInputs.length)}
+            hint={
+              [...result.rawInputs, ...result.providedInputs]
+                .slice(0, 2)
+                .map((r) => getItem(r.itemId)?.name)
+                .filter(Boolean)
+                .join(", ") || undefined
+            }
+          />
+          <SummaryCard
+            icon={<Gauge className="h-4 w-4" />}
+            label="Byproducts"
+            value={String(result.byproducts.length)}
+            warn={result.byproducts.length > 0}
+          />
+        </div>
+      )}
 
-      <CollapsibleSection title="Recipes in use" contentClassName="mt-0">
-        <div className="-mx-1 overflow-x-auto overflow-y-hidden rounded-md border border-surface-border sm:mx-0">
+      {!hiddenSectionIdSet.has("recipes-in-use") && (
+        <CollapsibleSection title="Recipes in use" contentClassName="mt-0">
+          <div className="-mx-1 overflow-x-auto overflow-y-hidden rounded-md border border-surface-border sm:mx-0">
           <table className="w-full min-w-[640px] text-sm sm:min-w-0">
             <thead className="bg-surface text-[11px] uppercase tracking-wider text-gray-400">
               <tr>
                 <th className="p-2 text-left">Recipe</th>
-                <th className="p-2 text-right">Buildings</th>
+                <th
+                  className="p-2 text-right"
+                  title="Fractional machines at 100% clock (3 decimal places)."
+                >
+                  Buildings
+                </th>
                 <th className="p-2 text-right">Power</th>
                 <th className="p-2 text-left">Inputs</th>
                 <th className="p-2 text-left">Outputs</th>
@@ -90,6 +124,12 @@ export function ResultsTable({ result, onInspect }: ResultsTableProps) {
                   ? getBuilding(usage.buildingId)
                   : undefined;
                 if (!recipe) return null;
+                const visibleInputs = usage.inputs.filter(
+                  (row) => !providedInputSet.has(row.itemId),
+                );
+                const omittedInputs = usage.inputs.filter((row) =>
+                  providedInputSet.has(row.itemId),
+                );
                 return (
                   <tr
                     key={usage.recipeId}
@@ -115,17 +155,33 @@ export function ResultsTable({ result, onInspect }: ResultsTableProps) {
                         </div>
                       )}
                     </td>
-                    <td className="num p-2 text-right">
-                      {formatRate(usage.buildings, 2)}
+                    <td
+                      className="num p-2 text-right"
+                      title="Fractional machines at 100% clock"
+                    >
+                      {formatBuildingsCount(usage.buildings)}
                     </td>
                     <td className="num p-2 text-right text-gray-400">
                       {formatPower(usage.powerMW)}
                     </td>
                     <td className="p-2">
                       <ItemRateList
-                        rows={usage.inputs}
+                        rows={visibleInputs}
                         onClick={onInspect}
+                        onToggleProvidedInput={onToggleProvidedInput}
+                        emptyLabel="All inputs excluded"
                       />
+                      {omittedInputs.length > 0 && (
+                        <div className="mt-1.5">
+                          <ItemRateList
+                            rows={omittedInputs}
+                            onClick={onInspect}
+                            onToggleProvidedInput={onToggleProvidedInput}
+                            compact
+                            toggleLabel="Restore"
+                          />
+                        </div>
+                      )}
                     </td>
                     <td className="p-2">
                       <ItemRateList
@@ -138,10 +194,11 @@ export function ResultsTable({ result, onInspect }: ResultsTableProps) {
               })}
             </tbody>
           </table>
-        </div>
-      </CollapsibleSection>
+          </div>
+        </CollapsibleSection>
+      )}
 
-      {flowEdges.length > 0 && (
+      {!hiddenSectionIdSet.has("production-chains") && flowEdges.length > 0 && (
         <CollapsibleSection
           title={`Production chains · ${flowEdges.length}`}
           contentClassName="space-y-2"
@@ -158,7 +215,8 @@ export function ResultsTable({ result, onInspect }: ResultsTableProps) {
         </CollapsibleSection>
       )}
 
-      {result.missingInputs.length > 0 && (
+      {!hiddenSectionIdSet.has("missing-inputs") &&
+        result.missingInputs.length > 0 && (
         <div className="card border-amber-500/50 bg-amber-500/5 p-4">
           <div className="flex items-center gap-2 text-amber-300">
             <AlertTriangle className="h-4 w-4" />
@@ -182,13 +240,19 @@ export function ResultsTable({ result, onInspect }: ResultsTableProps) {
         </div>
       )}
 
-      {result.rawInputs.length > 0 && (
+      {!hiddenSectionIdSet.has("raw-inputs") && result.rawInputs.length > 0 && (
         <CollapsibleSection title="Raw inputs" contentClassName="mt-0">
           <ItemRateGrid rows={result.rawInputs} onClick={onInspect} />
         </CollapsibleSection>
       )}
+      {!hiddenSectionIdSet.has("already-made-inputs") &&
+        result.providedInputs.length > 0 && (
+        <CollapsibleSection title="Already-made inputs" contentClassName="mt-0">
+          <ItemRateGrid rows={result.providedInputs} onClick={onInspect} />
+        </CollapsibleSection>
+      )}
 
-      {result.byproducts.length > 0 && (
+      {!hiddenSectionIdSet.has("byproducts") && result.byproducts.length > 0 && (
         <CollapsibleSection title="Byproducts (surplus)" contentClassName="mt-0">
           <ItemRateGrid
             rows={result.byproducts}
@@ -294,27 +358,59 @@ function FlowEdgeRow({
 function ItemRateList({
   rows,
   onClick,
+  onToggleProvidedInput,
+  emptyLabel,
+  compact,
+  toggleLabel,
 }: {
   rows: Array<{ itemId: string; ratePerMin: number }>;
   onClick: (itemId: string) => void;
+  onToggleProvidedInput?: (itemId: string, provided: boolean) => void;
+  emptyLabel?: string;
+  compact?: boolean;
+  toggleLabel?: string;
 }) {
+  if (rows.length === 0) {
+    return <span className="text-xs text-gray-500">{emptyLabel ?? "None"}</span>;
+  }
   return (
-    <div className="flex flex-wrap gap-1">
+    <div className="flex flex-wrap gap-1.5">
       {rows.map((r) => {
         const it = getItem(r.itemId);
         if (!it) return null;
         return (
-          <button
+          <div
             key={r.itemId}
-            type="button"
-            onClick={() => onClick(r.itemId)}
-            className="flex items-center gap-1 rounded-md border border-surface-border bg-surface px-1.5 py-0.5 text-xs hover:border-brand/60"
+            className={cn(
+              "flex items-center gap-1 rounded-md border border-surface-border bg-surface px-1.5 py-0.5 text-xs",
+              compact && "bg-surface/50 text-gray-400",
+            )}
           >
-            <ItemIcon iconUrl={it.iconUrl} alt={it.name} size={16} />
-            <span className="num text-gray-400">
-              {formatRate(r.ratePerMin)}
-            </span>
-          </button>
+            <button
+              type="button"
+              onClick={() => onClick(r.itemId)}
+              className="flex min-w-0 items-center gap-1 hover:text-brand"
+              title={it.name}
+            >
+              <ItemIcon iconUrl={it.iconUrl} alt={it.name} size={16} />
+              <span className="truncate">{it.name}</span>
+              <span className="num text-gray-400">{formatRate(r.ratePerMin)}</span>
+            </button>
+            {onToggleProvidedInput && (
+              <button
+                type="button"
+                onClick={() => onToggleProvidedInput(r.itemId, !compact)}
+                className="rounded border border-surface-border px-1 py-0.5 text-[10px] hover:border-brand/60"
+                title={
+                  compact
+                    ? "Include this input in recipe requirements"
+                    : "Omit this input from recipe requirements"
+                }
+              >
+                {toggleLabel ?? "Omit"}
+              </button>
+            )}
+          </div>
         );
       })}
     </div>

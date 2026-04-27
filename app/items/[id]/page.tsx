@@ -10,7 +10,6 @@ import {
   recipesConsuming,
   recipesProducing,
 } from "@/lib/data";
-import { formatRate } from "@/lib/utils";
 
 export function generateStaticParams() {
   return allItems().map((it) => ({ id: it.slug }));
@@ -113,39 +112,13 @@ export default function ItemPage({ params }: PageProps) {
         {consumers.length === 0 ? (
           <p className="text-sm text-gray-500">Not used as an ingredient.</p>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-3">
             {consumers.map((r) => (
-              <div key={r.id} className="card p-3">
-                <div className="mb-1 flex items-center gap-2">
-                  <span className="text-sm font-medium">{r.name}</span>
-                  {r.alternate && (
-                    <span className="chip border-brand/60 text-brand">Alt</span>
-                  )}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {r.products.map((p, idx) => {
-                    const prod = getItem(p.item);
-                    if (!prod) return null;
-                    return (
-                      <Link
-                        key={`${p.item}-${idx}`}
-                        href={`/items/${prod.slug}`}
-                        className="flex items-center gap-1.5 rounded-md border border-surface-border bg-surface px-2 py-0.5 text-xs hover:border-brand/60"
-                      >
-                        <ItemIcon
-                          iconUrl={prod.iconUrl}
-                          alt={prod.name}
-                          size={18}
-                        />
-                        <span>{prod.name}</span>
-                        <span className="text-gray-500">
-                          ({formatRate(p.ratePerMin)}/min)
-                        </span>
-                      </Link>
-                    );
-                  })}
-                </div>
-              </div>
+              <RecipeCard
+                key={r.id}
+                recipe={r}
+                emphasizeItemId={item.id}
+              />
             ))}
           </div>
         )}

@@ -17,7 +17,7 @@ import {
 import type { PlannerConfig } from "@/lib/planner/types";
 import { solvePlan } from "@/lib/planner/solver";
 import { usePlannerStore } from "@/lib/store/planner-store";
-import { cn, formatRate } from "@/lib/utils";
+import { cn, formatBuildingsCount, formatRate } from "@/lib/utils";
 
 interface AutomationBundlePanelProps {
   config: PlannerConfig;
@@ -107,11 +107,22 @@ function buildDerivedBundleState(
     },
   ];
 
+  if (beltSnap && !beltSnap.noop) {
+    pathOptions.push({
+      id: "path-belt-tidy",
+      label: "Path: belt-tidy raw",
+      hint: "Scales the bundle so the dominant raw draw lands on a clean belt step (same as the tidy button). Uses min-raw objective.",
+      objective: "raw",
+      rates: beltSnap.rates,
+      metrics: evaluateRates(config, beltSnap.rates, "raw"),
+    });
+  }
+
   if (perfect) {
     pathOptions.push({
       id: "path-perfect-numbers",
       label: "Path: perfect-ish numbers",
-      hint: "Searches bundle scales for cleaner raw/byproduct rates (180/120/100/60/50/30).",
+      hint: "Searches scales so raw draw and targets land near nice belt rates, favoring less byproduct excess.",
       objective: "raw",
       rates: perfect.rates,
       metrics: evaluateRates(config, perfect.rates, "raw"),
@@ -223,8 +234,21 @@ export function AutomationBundlePanel({
         objective: config.objective,
         enabledAlternates: [...config.enabledAlternates].sort(),
         disabledRecipes: [...config.disabledRecipes].sort(),
+        excludedRawInputs: [...(config.excludedRawInputs ?? [])].sort(),
+        providedInputs: [...(config.providedInputs ?? [])].sort(),
+        alternateInputRatios: config.alternateInputRatios ?? {},
+        maxCompletedHubTier: config.maxCompletedHubTier ?? null,
       }),
-    [config.disabledRecipes, config.enabledAlternates, config.objective, config.rawCaps],
+    [
+      config.alternateInputRatios,
+      config.disabledRecipes,
+      config.enabledAlternates,
+      config.excludedRawInputs,
+      config.maxCompletedHubTier,
+      config.objective,
+      config.providedInputs,
+      config.rawCaps,
+    ],
   );
   const cacheKey = `${draftSignature}::${configSignature}`;
 
@@ -516,7 +540,7 @@ export function AutomationBundlePanel({
                     </span>{" "}
                     /min, Buildings:{" "}
                     <span className="num text-gray-300">
-                      {option.metrics.totalBuildings}
+                      {formatBuildingsCount(option.metrics.totalBuildings)}
                     </span>
                     , Waste:{" "}
                     <span className="num text-gray-300">

@@ -48,6 +48,23 @@ export function canProduceItem(config: PlannerConfig, itemId: string): boolean {
   return solvePlan(withSingleTarget(config, itemId, EPS)).feasible;
 }
 
+/**
+ * Items the planner can produce under this config (including full supply chain).
+ * Raw resources are always included. Use with hub tier to dim unreachable items
+ * in the catalog.
+ */
+export function computeProducibleItemIds(config: PlannerConfig): Set<string> {
+  const s = new Set<string>();
+  for (const it of allItems()) {
+    if (it.isRaw) {
+      s.add(it.id);
+      continue;
+    }
+    if (canProduceItem(config, it.id)) s.add(it.id);
+  }
+  return s;
+}
+
 function isFeasibleAtRate(
   base: PlannerConfig,
   itemId: string,

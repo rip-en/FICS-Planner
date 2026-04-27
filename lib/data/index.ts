@@ -36,13 +36,52 @@ export const getRecipe = (id: ClassName): Recipe | undefined => recipes[id];
 export const getBuilding = (id: ClassName): Building | undefined =>
   buildings[id];
 
-/** Recipes whose products include this item. */
-export const recipesProducing = (itemId: ClassName): Recipe[] =>
-  allRecipes().filter((r) => r.products.some((p) => p.item === itemId));
+const recipesProducingByItem = new Map<ClassName, Recipe[]>();
+const recipesConsumingByItem = new Map<ClassName, Recipe[]>();
+const NO_RECIPES: Recipe[] = [];
 
-/** Recipes whose ingredients include this item. */
+for (const r of Object.values(recipes)) {
+  for (const p of r.products) {
+    let list = recipesProducingByItem.get(p.item);
+    if (!list) {
+      list = [];
+      recipesProducingByItem.set(p.item, list);
+    }
+    list.push(r);
+  }
+  for (const ing of r.ingredients) {
+    let list = recipesConsumingByItem.get(ing.item);
+    if (!list) {
+      list = [];
+      recipesConsumingByItem.set(ing.item, list);
+    }
+    list.push(r);
+  }
+}
+
+/** Recipes whose products include this item (shared array; do not mutate). */
+export const recipesProducing = (itemId: ClassName): Recipe[] =>
+  recipesProducingByItem.get(itemId) ?? NO_RECIPES;
+
+/** Recipes whose ingredients include this item (shared array; do not mutate). */
 export const recipesConsuming = (itemId: ClassName): Recipe[] =>
-  allRecipes().filter((r) => r.ingredients.some((p) => p.item === itemId));
+  recipesConsumingByItem.get(itemId) ?? NO_RECIPES;
+
+/**
+ * Recipe ids in `planIds` that output `itemId`. For flow-graph and solver helpers.
+ */
+export function recipeIdsProducingItemInPlan(
+  itemId: ClassName,
+  planIds: ReadonlySet<string>,
+): string[] {
+  const list = recipesProducingByItem.get(itemId);
+  if (!list) return [];
+  const out: string[] = [];
+  for (const r of list) {
+    if (planIds.has(r.id)) out.push(r.id);
+  }
+  return out;
+}
 
 /** A sorted unique list of every item category present in the dataset. */
 export const itemCategories = (): string[] => {
@@ -54,11 +93,20 @@ export const itemCategories = (): string[] => {
 /** Default (non-alternate) recipe for a produced item, if it exists. */
 export const defaultRecipeFor = (itemId: ClassName): Recipe | undefined => {
   const options = recipesProducing(itemId);
-  return (
-    options.find((r) => !r.alternate && r.inMachine) ??
-    options.find((r) => r.inMachine) ??
-    options[0]
-  );
+  if (options.length === 0) return undefined;
+  const sorted = [...options].sort((a, b) => {
+    const aM = a.inMachine ? 0 : 1;
+    const bM = b.inMachine ? 0 : 1;
+    if (aM !== bM) return aM - bM;
+    const aAlt = a.alternate ? 1 : 0;
+    const bAlt = b.alternate ? 1 : 0;
+    if (aAlt !== bAlt) return aAlt - bAlt;
+    const ra = a.products.find((p) => p.item === itemId)?.ratePerMin ?? 0;
+    const rb = b.products.find((p) => p.item === itemId)?.ratePerMin ?? 0;
+    if (rb !== ra) return rb - ra;
+    return a.id.localeCompare(b.id);
+  });
+  return sorted[0];
 };
 
 /** Item map keyed by slug for /items/[id] lookups. */

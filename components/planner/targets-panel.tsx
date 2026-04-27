@@ -13,6 +13,10 @@ import { cn, formatRate } from "@/lib/utils";
 interface TargetsPanelProps {
   targets: PlannerTarget[];
   config: PlannerConfig;
+  /** When set, targets missing from this set get a hub-tier warning. */
+  hubProducibleItemIds?: Set<string> | null;
+  /** While true, hub warnings are hidden (reachability scan in progress). */
+  hubTierScanPending?: boolean;
   onInspect: (itemId: string) => void;
 }
 
@@ -27,7 +31,13 @@ function toRawMap(rows: Array<{ itemId: string; ratePerMin: number }>) {
   return out;
 }
 
-export function TargetsPanel({ targets, config, onInspect }: TargetsPanelProps) {
+export function TargetsPanel({
+  targets,
+  config,
+  hubProducibleItemIds = null,
+  hubTierScanPending = false,
+  onInspect,
+}: TargetsPanelProps) {
   const setRate = usePlannerStore((s) => s.setTargetRate);
   const remove = usePlannerStore((s) => s.removeTarget);
   const [bodyOpen, setBodyOpen] = useState(true);
@@ -50,15 +60,21 @@ export function TargetsPanel({ targets, config, onInspect }: TargetsPanelProps) 
         objective: config.objective,
         rawCaps: config.rawCaps ?? {},
         excludedRawInputs: config.excludedRawInputs ?? [],
+        providedInputs: config.providedInputs ?? [],
+        alternateInputRatios: config.alternateInputRatios ?? {},
         enabledAlternates: [...config.enabledAlternates].sort(),
         disabledRecipes: [...config.disabledRecipes].sort(),
+        maxCompletedHubTier: config.maxCompletedHubTier,
       }),
     [
       config.disabledRecipes,
       config.enabledAlternates,
       config.excludedRawInputs,
+      config.providedInputs,
+      config.alternateInputRatios,
       config.objective,
       config.rawCaps,
+      config.maxCompletedHubTier,
     ],
   );
 
@@ -142,6 +158,11 @@ export function TargetsPanel({ targets, config, onInspect }: TargetsPanelProps) 
           />
         </div>
       </button>
+      {hubTierScanPending && config.maxCompletedHubTier !== undefined && (
+        <p className="border-b border-surface-border px-3 py-2 text-[11px] text-gray-500">
+          Checking hub-tier reachability for target warnings…
+        </p>
+      )}
       {bodyOpen && (
         <ul
           id="targets-panel-body"
@@ -171,6 +192,13 @@ export function TargetsPanel({ targets, config, onInspect }: TargetsPanelProps) 
                     </div>
                     <div className="text-[11px] text-gray-500">
                       {item.category}
+                      {!hubTierScanPending &&
+                        hubProducibleItemIds &&
+                        !hubProducibleItemIds.has(t.itemId) && (
+                          <span className="ml-1 text-amber-200/90">
+                            · above hub tier
+                          </span>
+                        )}
                     </div>
                     <div className="mt-0.5 text-[11px] text-gray-500">
                       {isComputingCosts ? (

@@ -9,12 +9,12 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ItemIcon } from "@/components/item-icon";
 import { RecipeCard } from "@/components/item-detail/recipe-card";
 import { CollapsibleSection } from "@/components/ui/collapsible-section";
 import { getItem, recipesConsuming, recipesProducing } from "@/lib/data";
-import { cn, formatRate } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 function DrawerUnknownItem({
   itemId,
@@ -24,7 +24,7 @@ function DrawerUnknownItem({
   onClose: () => void;
 }) {
   return (
-    <aside className="flex h-full flex-col border-l border-surface-border bg-surface-raised">
+    <aside className="flex h-full min-w-0 flex-col overflow-x-hidden border-l border-surface-border bg-surface-raised">
       <div className="flex items-center justify-between border-b border-surface-border px-3 py-2">
         <span className="text-xs uppercase tracking-wider text-gray-500">
           Details
@@ -53,7 +53,7 @@ function DrawerUnknownItem({
 
 function DrawerWelcome() {
   return (
-    <aside className="flex h-full flex-col border-l border-surface-border bg-surface-raised">
+    <aside className="flex h-full min-w-0 flex-col overflow-x-hidden border-l border-surface-border bg-surface-raised">
       <div className="flex items-center justify-between border-b border-surface-border px-3 py-2">
         <span className="text-xs uppercase tracking-wider text-gray-500">
           Details
@@ -111,6 +111,10 @@ interface DetailDrawerProps {
   onToggleAlternate: (recipeId: string) => void;
   onToggleDisabled: (recipeId: string) => void;
   onUseOnlyThis: (recipeId: string) => void;
+  providedInputs: string[];
+  onToggleProvidedInput: (itemId: string, provided: boolean) => void;
+  /** When hub tier gating makes this item unplannable as a target. */
+  addTargetBlockedByHub?: boolean;
 }
 
 export function DetailDrawer({
@@ -126,6 +130,9 @@ export function DetailDrawer({
   onToggleAlternate,
   onToggleDisabled,
   onUseOnlyThis,
+  providedInputs,
+  onToggleProvidedInput,
+  addTargetBlockedByHub = false,
 }: DetailDrawerProps) {
   const item = itemId ? getItem(itemId) : undefined;
   const missingItem = Boolean(itemId && !item);
@@ -138,6 +145,16 @@ export function DetailDrawer({
     [disabledRecipes],
   );
   const inUseSet = useMemo(() => new Set(recipesInUse), [recipesInUse]);
+  const providedInputSet = useMemo(
+    () => new Set(providedInputs),
+    [providedInputs],
+  );
+  const [previewProductionPercentByRecipeId, setPreviewProductionPercentByRecipeId] =
+    useState<Record<string, number>>({});
+
+  useEffect(() => {
+    setPreviewProductionPercentByRecipeId({});
+  }, [itemId]);
 
   const { producers, alternates, consumers, producerCount } = useMemo(() => {
     if (!itemId)
@@ -163,7 +180,7 @@ export function DetailDrawer({
   if (!item) return <DrawerWelcome />;
 
   return (
-    <aside className="flex h-full flex-col border-l border-surface-border bg-surface-raised">
+    <aside className="flex h-full min-w-0 flex-col overflow-x-hidden border-l border-surface-border bg-surface-raised">
       <div className="flex items-center justify-between gap-2 border-b border-surface-border px-3 py-2">
         <div className="flex items-center gap-2">
           <button
@@ -191,7 +208,7 @@ export function DetailDrawer({
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
         <header className="border-b border-surface-border p-4">
           <div className="flex items-start gap-3">
             <ItemIcon iconUrl={item.iconUrl} alt={item.name} size={64} />
@@ -222,11 +239,18 @@ export function DetailDrawer({
               </span>
             )}
           </div>
-          <div className="mt-3 flex flex-wrap gap-2">
+          <div className="mt-3 flex flex-col gap-2">
+            <div className="flex flex-wrap gap-2">
             <button
               type="button"
+              disabled={addTargetBlockedByHub}
               onClick={() => onAddTarget(item.id)}
-              className="btn btn-primary"
+              className="btn btn-primary disabled:cursor-not-allowed disabled:opacity-50"
+              title={
+                addTargetBlockedByHub
+                  ? "Raise the completed hub tier in the toolbar to plan this item"
+                  : undefined
+              }
             >
               <Plus className="h-3.5 w-3.5" />
               Add to planner
@@ -235,6 +259,14 @@ export function DetailDrawer({
               <ExternalLink className="h-3.5 w-3.5" />
               Open page
             </Link>
+            </div>
+            {addTargetBlockedByHub && (
+              <p className="text-xs text-amber-200/90">
+                This item is not reachable at your selected hub tier— increase
+                &quot;Hub tier done&quot; in the plan toolbar, or turn off
+                milestone gating.
+              </p>
+            )}
           </div>
         </header>
 
@@ -256,6 +288,8 @@ export function DetailDrawer({
                 disabled={disabledSet.has(r.id)}
                 inUse={inUseSet.has(r.id)}
                 hasCompetitors={hasCompetitors}
+                providedInputSet={providedInputSet}
+                onToggleProvidedInput={onToggleProvidedInput}
               />
             ))
           )}
@@ -286,6 +320,18 @@ export function DetailDrawer({
                 disabled={disabledSet.has(r.id)}
                 inUse={inUseSet.has(r.id)}
                 hasCompetitors={hasCompetitors}
+                providedInputSet={providedInputSet}
+                onToggleProvidedInput={onToggleProvidedInput}
+                productionPercent={
+                  previewProductionPercentByRecipeId[r.id] ?? 100
+                }
+                onSetProductionPercent={(percent) => {
+                  const boundedPercent = Math.min(300, Math.max(10, percent));
+                  setPreviewProductionPercentByRecipeId((prev) => ({
+                    ...prev,
+                    [r.id]: boundedPercent,
+                  }));
+                }}
               />
             ))}
           </CollapsibleSection>
@@ -302,64 +348,52 @@ export function DetailDrawer({
             </p>
           ) : (
             <div className="space-y-2">
-              {consumers.map((r) => (
-                <ConsumerRow
-                  key={r.id}
-                  recipeName={r.name}
-                  alternate={r.alternate}
-                  products={r.products.map((p) => ({
-                    id: p.item,
-                    amount: p.amount,
-                    ratePerMin: p.ratePerMin,
-                  }))}
-                  onSelect={onSelect}
-                />
-              ))}
+              {consumers.map((r) => {
+                const firstProductId = r.products[0]?.item;
+                const recipeHasCompetitors = firstProductId
+                  ? recipesProducing(firstProductId).length > 1
+                  : false;
+                return (
+                  <RecipeCard
+                    key={r.id}
+                    recipe={r}
+                    emphasizeItemId={item.id}
+                    onItemClick={onSelect}
+                    onToggleAlternate={r.alternate ? onToggleAlternate : undefined}
+                    onToggleDisabled={onToggleDisabled}
+                    onUseOnlyThis={onUseOnlyThis}
+                    enabled={r.alternate ? enabledSet.has(r.id) : undefined}
+                    disabled={disabledSet.has(r.id)}
+                    inUse={inUseSet.has(r.id)}
+                    hasCompetitors={recipeHasCompetitors}
+                    providedInputSet={providedInputSet}
+                    onToggleProvidedInput={onToggleProvidedInput}
+                    productionPercent={
+                      r.alternate
+                        ? (previewProductionPercentByRecipeId[r.id] ?? 100)
+                        : undefined
+                    }
+                    onSetProductionPercent={
+                      r.alternate
+                        ? (percent) => {
+                            const boundedPercent = Math.min(
+                              300,
+                              Math.max(10, percent),
+                            );
+                            setPreviewProductionPercentByRecipeId((prev) => ({
+                              ...prev,
+                              [r.id]: boundedPercent,
+                            }));
+                          }
+                        : undefined
+                    }
+                  />
+                );
+              })}
             </div>
           )}
         </CollapsibleSection>
       </div>
     </aside>
-  );
-}
-
-function ConsumerRow({
-  recipeName,
-  alternate,
-  products,
-  onSelect,
-}: {
-  recipeName: string;
-  alternate: boolean;
-  products: { id: string; amount: number; ratePerMin: number }[];
-  onSelect: (itemId: string) => void;
-}) {
-  return (
-    <div className="card p-2">
-      <div className="mb-1 flex items-center gap-2">
-        <span className="text-xs font-medium text-gray-200">{recipeName}</span>
-        {alternate && <span className="chip border-brand/60 text-brand">Alt</span>}
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        {products.map((p, idx) => {
-          const item = getItem(p.id);
-          if (!item) return null;
-          return (
-            <button
-              key={`${p.id}-${idx}`}
-              type="button"
-              onClick={() => onSelect(p.id)}
-              className="flex items-center gap-1.5 rounded-md border border-surface-border bg-surface px-1.5 py-0.5 text-xs hover:border-brand/60"
-            >
-              <ItemIcon iconUrl={item.iconUrl} alt={item.name} size={18} />
-              <span>{item.name}</span>
-              <span className="text-gray-500">
-                ({formatRate(p.ratePerMin)}/min)
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
   );
 }
