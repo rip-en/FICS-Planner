@@ -3,6 +3,7 @@
 import { AlertTriangle, Factory, Flame, Gauge, Zap } from "lucide-react";
 import { useMemo } from "react";
 import { getBuilding, getItem, getRecipe } from "@/lib/data";
+import { useRecipeBuildProgressChecklist } from "@/lib/store/planner-store";
 import { buildProductionFlowEdges } from "@/lib/planner/production-flow";
 import type { SolverResult } from "@/lib/planner/types";
 import { ProductionFlowDiagram } from "@/components/planner/production-flow-diagram";
@@ -44,6 +45,8 @@ export function ResultsTable({
     () => new Set(hiddenSectionIds),
     [hiddenSectionIds],
   );
+  const { checkedRecipeIds, toggleRecipeChecked } =
+    useRecipeBuildProgressChecklist();
 
   if (!result.feasible) {
     return (
@@ -111,9 +114,10 @@ export function ResultsTable({
           defaultOpen
         >
           <p className="mb-2 text-[11px] text-gray-500">
-            Machines as nodes; arrows show intermediate items/min between recipes
-            (same routing as production chains). Click a node to inspect its
-            main product.
+            Top-down layout: each intermediate item is its own arrow (parallel
+            feeds into one machine no longer collapse to a single edge). Same
+            routing data as production chains. Click a node to inspect its main
+            product.
           </p>
           <ProductionFlowDiagram
             result={result}
@@ -128,10 +132,21 @@ export function ResultsTable({
           title="Recipes in use"
           contentClassName="mt-0"
         >
+          <p className="mb-2 text-[11px] leading-relaxed text-gray-500">
+            Check each row when that machine line is built in-game. This is only
+            a progress hint — it does not change the plan.
+          </p>
           <div className="-mx-1 overflow-x-auto overflow-y-hidden rounded-md border border-surface-border sm:mx-0">
-          <table className="w-full min-w-[640px] text-sm sm:min-w-0">
+          <table className="w-full min-w-[680px] text-sm sm:min-w-0">
             <thead className="bg-surface text-[11px] uppercase tracking-wider text-gray-400">
               <tr>
+                <th
+                  className="w-10 p-2 text-center"
+                  title="Built in factory"
+                >
+                  <span className="sr-only">Built</span>
+                  ✓
+                </th>
                 <th className="p-2 text-left">Recipe</th>
                 <th
                   className="p-2 text-right"
@@ -157,14 +172,52 @@ export function ResultsTable({
                 const omittedInputs = usage.inputs.filter((row) =>
                   fullyProvidedInputSet.has(row.itemId),
                 );
+                const done = checkedRecipeIds.has(usage.recipeId);
                 return (
                   <tr
                     key={usage.recipeId}
-                    className="border-t border-surface-border align-top"
+                    className={cn(
+                      "border-t border-surface-border align-top",
+                      done && "opacity-[0.72]",
+                    )}
                   >
+                    <td className="p-2 align-middle">
+                      <label
+                        className={cn(
+                          "flex cursor-pointer select-none items-center justify-center rounded border px-1 py-1",
+                          done
+                            ? "border-brand/35 bg-brand/10"
+                            : "border-surface-border hover:border-brand/40",
+                        )}
+                        title={
+                          done
+                            ? "Uncheck if still building this line"
+                            : "Mark this recipe line as built"
+                        }
+                      >
+                        <input
+                          type="checkbox"
+                          checked={done}
+                          onChange={() => toggleRecipeChecked(usage.recipeId)}
+                          className="h-3.5 w-3.5 accent-brand"
+                          aria-label={
+                            done
+                              ? `${recipe.name}: built, click to undo`
+                              : `Mark ${recipe.name} as built`
+                          }
+                        />
+                      </label>
+                    </td>
                     <td className="p-2">
                       <div className="flex items-center gap-2">
-                        <span className="font-medium">{recipe.name}</span>
+                        <span
+                          className={cn(
+                            "font-medium",
+                            done && "text-gray-500 line-through",
+                          )}
+                        >
+                          {recipe.name}
+                        </span>
                         {recipe.alternate && (
                           <span className="chip border-brand/60 text-brand">
                             Alt

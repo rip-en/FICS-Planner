@@ -37,6 +37,10 @@ interface RecipeCardProps {
   disabled?: boolean;
   /** Whether the solver is actively using this recipe in the current plan. */
   inUse?: boolean;
+  /** Planner build checklist — recipe marked built in “Recipes in use”. */
+  buildProgressChecked?: boolean;
+  /** Toggle build checklist for this recipe (when shown). */
+  onToggleBuildProgress?: () => void;
   /** True when >=2 recipes produce the same primary product; unlocks the
    * "use only this" button. */
   hasCompetitors?: boolean;
@@ -333,6 +337,8 @@ export function RecipeCard({
   enabled,
   disabled,
   inUse,
+  buildProgressChecked,
+  onToggleBuildProgress,
   hasCompetitors,
   providedInputSet,
   onToggleProvidedInput,
@@ -361,11 +367,45 @@ export function RecipeCard({
         enabled && !disabled && "border-brand/40 bg-brand/5",
         inUse && "ring-1 ring-brand/40",
         disabled && "border-red-500/30 bg-red-500/5 opacity-70",
+        buildProgressChecked && "opacity-[0.85]",
       )}
     >
       <div className="mb-2 flex min-w-0 flex-col gap-2 @[24rem]:flex-row @[24rem]:items-start @[24rem]:justify-between">
         <div className="min-w-0 flex flex-1 flex-wrap items-center gap-x-1.5 gap-y-1">
-          <div className="min-w-0 break-words text-sm font-semibold">
+          {onToggleBuildProgress && (
+            <label
+              className={cn(
+                "flex shrink-0 cursor-pointer select-none items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                buildProgressChecked
+                  ? "border-brand/35 bg-brand/10 text-brand/90"
+                  : "border-surface-border text-gray-500 hover:border-brand/40",
+              )}
+              title={
+                buildProgressChecked
+                  ? "Still building this line — uncheck"
+                  : "Mark this line as built in your factory"
+              }
+            >
+              <input
+                type="checkbox"
+                checked={Boolean(buildProgressChecked)}
+                onChange={() => onToggleBuildProgress()}
+                className="h-3 w-3 accent-brand"
+                aria-label={
+                  buildProgressChecked
+                    ? `${recipe.name}: marked built, click to undo`
+                    : `Mark ${recipe.name} as built`
+                }
+              />
+              <span>Built</span>
+            </label>
+          )}
+          <div
+            className={cn(
+              "min-w-0 break-words text-sm font-semibold",
+              buildProgressChecked && "text-gray-500 line-through",
+            )}
+          >
             {recipe.name}
           </div>
           {recipe.alternate && (

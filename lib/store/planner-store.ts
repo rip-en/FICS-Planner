@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { create } from "zustand";
 import { useStore } from "zustand";
 import { persist } from "zustand/middleware";
@@ -64,6 +65,9 @@ interface PlannerState {
   switchPlan: (id: string) => void;
   deletePlan: (id: string) => void;
   replacePlans: (plans: Record<string, SavedPlan>, activePlanId: string) => void;
+  /** Per-plan checklist: recipe IDs marked “built” in the Recipes in use table. */
+  recipeBuildProgressByPlanId: Record<string, string[]>;
+  toggleRecipeBuildProgress: (recipeId: string) => void;
 }
 
 type PlannerTemporalSlice = Pick<PlannerState, "plans" | "activePlanId">;
@@ -91,6 +95,21 @@ export const usePlannerStore = create<PlannerState>()(
       (set, get, store) => ({
       activePlanId: initialPlan.id,
       plans: { [initialPlan.id]: initialPlan },
+      recipeBuildProgressByPlanId: {},
+
+      toggleRecipeBuildProgress: (recipeId) =>
+        set((state) => {
+          const planId = state.activePlanId;
+          const prev = state.recipeBuildProgressByPlanId[planId] ?? [];
+          const nextSet = new Set(prev);
+          if (nextSet.has(recipeId)) nextSet.delete(recipeId);
+          else nextSet.add(recipeId);
+          const nextArr = Array.from(nextSet);
+          const nextMap = { ...state.recipeBuildProgressByPlanId };
+          if (nextArr.length === 0) delete nextMap[planId];
+          else nextMap[planId] = nextArr;
+          return { recipeBuildProgressByPlanId: nextMap };
+        }),
 
       addTarget: (itemId, rate = 60) =>
         set((state) => {
@@ -496,16 +515,26 @@ export const usePlannerStore = create<PlannerState>()(
 
       deletePlan: (id) =>
         set((state) => {
+          const { [id]: _removedProgress, ...restProgress } =
+            state.recipeBuildProgressByPlanId;
           const { [id]: _, ...rest } = state.plans;
           if (Object.keys(rest).length === 0) {
             const fresh = makePlan();
-            return { plans: { [fresh.id]: fresh }, activePlanId: fresh.id };
+            return {
+              plans: { [fresh.id]: fresh },
+              activePlanId: fresh.id,
+              recipeBuildProgressByPlanId: restProgress,
+            };
           }
           const nextActive =
             state.activePlanId === id
               ? Object.keys(rest)[0]
               : state.activePlanId;
-          return { plans: rest, activePlanId: nextActive };
+          return {
+            plans: rest,
+            activePlanId: nextActive,
+            recipeBuildProgressByPlanId: restProgress,
+          };
         }),
 
       replacePlans: (plans, activePlanId) => {
@@ -516,7 +545,19 @@ export const usePlannerStore = create<PlannerState>()(
         ).temporal;
         const t = temporalStore.getState();
         t.pause();
-        set({ plans, activePlanId });
+        set((state) => {
+          const validIds = new Set(Object.keys(plans));
+          const nextProgress = Object.fromEntries(
+            Object.entries(state.recipeBuildProgressByPlanId).filter(([k]) =>
+              validIds.has(k),
+            ),
+          );
+          return {
+            plans,
+            activePlanId,
+            recipeBuildProgressByPlanId: nextProgress,
+          };
+        });
         t.resume();
         t.clear();
       },
@@ -531,10 +572,11 @@ export const usePlannerStore = create<PlannerState>()(
     ),
     {
       name: "factory:plans",
-      version: 1,
+      version: 2,
       partialize: (state) => ({
         plans: state.plans,
         activePlanId: state.activePlanId,
+        recipeBuildProgressByPlanId: state.recipeBuildProgressByPlanId,
       }),
       merge: (persistedState, currentState) => {
         const p = persistedState as Partial<PlannerState> | undefined;
@@ -554,6 +596,9 @@ export const usePlannerStore = create<PlannerState>()(
           ...currentState,
           ...p,
           plans: mergedPlans,
+          recipeBuildProgressByPlanId:
+            p.recipeBuildProgressByPlanId ??
+            currentState.recipeBuildProgressByPlanId,
         };
       },
     },
@@ -595,3 +640,19 @@ export const useActiveTargets = (): PlannerTarget[] => {
   const plan = usePlannerStore((s) => s.plans[s.activePlanId]);
   return plan?.config.targets ?? EMPTY_TARGETS;
 };
+
+/** Checklist for “Recipes in use” / in-use recipe cards (persisted per plan). */
+export function useRecipeBuildProgressChecklist(): {
+  checkedRecipeIds: Set<string>;
+  toggleRecipeChecked: (recipeId: string) => void;
+} {
+  const ids = usePlannerStore((s) => {
+    const planId = s.activePlanId;
+    return s.recipeBuildProgressByPlanId[planId] ?? [];
+  });
+  const toggleRecipeBuildProgress = usePlannerStore(
+    (s) => s.toggleRecipeBuildProgress,
+  );
+  const checkedRecipeIds = useMemo(() => new Set(ids), [ids]);
+  return { checkedRecipeIds, toggleRecipeChecked: toggleRecipeBuildProgress };
+}

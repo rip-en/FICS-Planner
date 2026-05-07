@@ -19,6 +19,7 @@ import {
   recipesProducing,
   standardRecipeFor,
 } from "@/lib/data";
+import { useRecipeBuildProgressChecklist } from "@/lib/store/planner-store";
 import { dominantProductId } from "@/lib/recipe-compare";
 import { cn } from "@/lib/utils";
 
@@ -151,6 +152,8 @@ export function DetailDrawer({
     [disabledRecipes],
   );
   const inUseSet = useMemo(() => new Set(recipesInUse), [recipesInUse]);
+  const { checkedRecipeIds, toggleRecipeChecked } =
+    useRecipeBuildProgressChecklist();
   const providedInputSet = useMemo(
     () => new Set(providedInputs),
     [providedInputs],
@@ -300,6 +303,12 @@ export function DetailDrawer({
                 onUseOnlyThis={onUseOnlyThis}
                 disabled={disabledSet.has(r.id)}
                 inUse={inUseSet.has(r.id)}
+                buildProgressChecked={checkedRecipeIds.has(r.id)}
+                onToggleBuildProgress={
+                  inUseSet.has(r.id)
+                    ? () => toggleRecipeChecked(r.id)
+                    : undefined
+                }
                 hasCompetitors={hasCompetitors}
                 providedInputSet={providedInputSet}
                 onToggleProvidedInput={onToggleProvidedInput}
@@ -333,6 +342,12 @@ export function DetailDrawer({
                 enabled={enabledSet.has(r.id)}
                 disabled={disabledSet.has(r.id)}
                 inUse={inUseSet.has(r.id)}
+                buildProgressChecked={checkedRecipeIds.has(r.id)}
+                onToggleBuildProgress={
+                  inUseSet.has(r.id)
+                    ? () => toggleRecipeChecked(r.id)
+                    : undefined
+                }
                 hasCompetitors={hasCompetitors}
                 providedInputSet={providedInputSet}
                 onToggleProvidedInput={onToggleProvidedInput}
@@ -386,6 +401,12 @@ export function DetailDrawer({
                     enabled={r.alternate ? enabledSet.has(r.id) : undefined}
                     disabled={disabledSet.has(r.id)}
                     inUse={inUseSet.has(r.id)}
+                    buildProgressChecked={checkedRecipeIds.has(r.id)}
+                    onToggleBuildProgress={
+                      inUseSet.has(r.id)
+                        ? () => toggleRecipeChecked(r.id)
+                        : undefined
+                    }
                     hasCompetitors={recipeHasCompetitors}
                     providedInputSet={providedInputSet}
                     onToggleProvidedInput={onToggleProvidedInput}

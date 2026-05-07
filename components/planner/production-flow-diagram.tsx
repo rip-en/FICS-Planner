@@ -1,6 +1,7 @@
 "use client";
 
 import dagre from "@dagrejs/dagre";
+import type { Edge as GraphEdge } from "@dagrejs/graphlib";
 import { useId, useMemo } from "react";
 import { getBuilding, getItem, getRecipe } from "@/lib/data";
 import { buildProductionFlowEdges } from "@/lib/planner/production-flow";
@@ -8,9 +9,10 @@ import type { SolverResult } from "@/lib/planner/types";
 import { dominantProductId } from "@/lib/recipe-compare";
 import { cn, formatRate } from "@/lib/utils";
 
-const NODE_W = 196;
-const NODE_H = 48;
-const PAD = 28;
+const NODE_MIN_W = 180;
+const NODE_MAX_W = 280;
+const NODE_H = 52;
+const PAD = 32;
 
 interface LayoutNode {
   id: string;
@@ -29,6 +31,12 @@ interface LayoutEdge {
   title: string;
 }
 
+function estimateNodeWidth(title: string): number {
+  const w = 96 + Math.min(180, Math.ceil(title.length) * 6.5);
+  return Math.min(NODE_MAX_W, Math.max(NODE_MIN_W, w));
+}
+
+/** Dagre needs one graph edge per routed spline — merge hides parallel flows. */
 function buildLayout(result: SolverResult): {
   nodes: LayoutNode[];
   edges: LayoutEdge[];
@@ -47,45 +55,44 @@ function buildLayout(result: SolverResult): {
     recipeIds.add(e.toRecipeId);
   }
 
-  const merged = new Map<
-    string,
-    { items: Array<{ itemId: string; ratePerMin: number }> }
-  >();
-  const sep = "\x00";
-  for (const e of flowEdges) {
-    const k = `${e.fromRecipeId}${sep}${e.toRecipeId}`;
-    let block = merged.get(k);
-    if (!block) {
-      block = { items: [] };
-      merged.set(k, block);
-    }
-    block.items.push({ itemId: e.itemId, ratePerMin: e.ratePerMin });
-  }
-
-  const g = new dagre.graphlib.Graph();
+  const g = new dagre.graphlib.Graph({ multigraph: true });
   g.setGraph({
-    rankdir: "LR",
-    nodesep: 32,
-    ranksep: 56,
+    rankdir: "TB",
+    align: "UL",
+    nodesep: 56,
+    edgesep: 36,
+    ranksep: 88,
     marginx: PAD,
     marginy: PAD,
+    acyclicer: "greedy",
+    ranker: "network-simplex",
   });
   g.setDefaultEdgeLabel(() => ({}));
 
   for (const id of recipeIds) {
-    g.setNode(id, { width: NODE_W, height: NODE_H });
+    const recipe = getRecipe(id);
+    const title = recipe?.name ?? id;
+    const w = estimateNodeWidth(title);
+    g.setNode(id, { width: w, height: NODE_H });
   }
 
-  for (const [k, block] of merged) {
-    const [from, to] = k.split(sep);
-    const title = block.items
-      .map((it) => {
-        const name = getItem(it.itemId)?.name ?? it.itemId;
-        return `${name} ${formatRate(it.ratePerMin)}`;
-      })
-      .join(" · ");
-    g.setEdge(from, to, { label: title });
-  }
+  flowEdges.forEach((fe, idx) => {
+    const itemName = getItem(fe.itemId)?.name ?? fe.itemId;
+    const edgeLabel = `${itemName} · ${formatRate(fe.ratePerMin)}/min`;
+    const labelW = Math.min(220, 48 + itemName.length * 5.5);
+    g.setEdge(
+      fe.fromRecipeId,
+      fe.toRecipeId,
+      {
+        label: edgeLabel,
+        width: labelW,
+        height: 22,
+        labelpos: "c",
+        minlen: 1,
+      },
+      String(idx),
+    );
+  });
 
   dagre.layout(g);
 
@@ -101,7 +108,7 @@ function buildLayout(result: SolverResult): {
       id,
       x: n.x,
       y: n.y,
-      width: n.width ?? NODE_W,
+      width: n.width ?? estimateNodeWidth(recipe?.name ?? id),
       height: n.height ?? NODE_H,
       title: recipe?.name ?? id,
       subtitle: building?.name,
@@ -110,29 +117,30 @@ function buildLayout(result: SolverResult): {
   }
 
   const edges: LayoutEdge[] = [];
-  for (const [k, block] of merged) {
-    const [from, to] = k.split(sep);
-    const e = g.edge(from, to);
-    const pts = e?.points;
+  const graphEdges = g.edges() as GraphEdge[];
+  for (let i = 0; i < graphEdges.length; i++) {
+    const edgeObj = graphEdges[i]!;
+    const label = g.edge(edgeObj) as
+      | { points?: { x: number; y: number }[]; label?: string }
+      | undefined;
+    const pts = label?.points;
     if (!pts || pts.length < 2) continue;
+    const fe = flowEdges[Number(edgeObj.name)];
+    const title =
+      label?.label ??
+      (fe
+        ? `${getItem(fe.itemId)?.name ?? fe.itemId} · ${formatRate(fe.ratePerMin)}/min`
+        : "");
     edges.push({
-      key: k,
-      points: pts.map((p: { x: number; y: number }) => ({
-        x: p.x,
-        y: p.y,
-      })),
-      title: block.items
-        .map((it) => {
-          const name = getItem(it.itemId)?.name ?? it.itemId;
-          return `${name} ${formatRate(it.ratePerMin)}/min`;
-        })
-        .join("\n"),
+      key: `${edgeObj.v}-${edgeObj.w}-${edgeObj.name ?? i}`,
+      points: pts.map((p) => ({ x: p.x, y: p.y })),
+      title,
     });
   }
 
   const graph = g.graph();
-  const width = Math.max(320, (graph.width ?? 400) + PAD * 2);
-  const height = Math.max(240, (graph.height ?? 300) + PAD * 2);
+  const width = Math.max(360, (graph.width ?? 400) + PAD * 2);
+  const height = Math.max(280, (graph.height ?? 320) + PAD * 2);
 
   return { nodes, edges, width, height };
 }
