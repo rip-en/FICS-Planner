@@ -9,6 +9,7 @@ import {
   itemBySlug,
   recipesConsuming,
   recipesProducing,
+  standardRecipeFor,
 } from "@/lib/data";
 
 export function generateStaticParams() {
@@ -36,6 +37,7 @@ export default function ItemPage({ params }: PageProps) {
   const producers = produced.filter((r) => !r.alternate);
   const alternates = produced.filter((r) => r.alternate);
   const consumers = recipesConsuming(item.id);
+  const standardBaseline = standardRecipeFor(item.id);
 
   return (
     <main className="mx-auto max-w-5xl p-4 pb-8 sm:p-6">
@@ -98,7 +100,12 @@ export default function ItemPage({ params }: PageProps) {
           heading="h2"
         >
           {alternates.map((r) => (
-            <RecipeCard key={r.id} recipe={r} />
+            <RecipeCard
+              key={r.id}
+              recipe={r}
+              compareBaseline={standardBaseline}
+              comparePrimaryItemId={item.id}
+            />
           ))}
         </CollapsibleSection>
       )}

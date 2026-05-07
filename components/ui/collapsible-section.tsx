@@ -10,6 +10,7 @@ interface CollapsibleSectionProps {
   defaultOpen?: boolean;
   className?: string;
   contentClassName?: string;
+  /** Maps to `aria-level` on the visual title (heading elements are not allowed inside `<button>`). */
   heading?: "h2" | "h3";
   /** Bordered panel with comfortable touch targets for mobile. */
   variant?: "plain" | "panel";
@@ -27,6 +28,7 @@ export function CollapsibleSection({
   const [open, setOpen] = useState(defaultOpen);
   const panelId = useId();
   const isPanel = variant === "panel";
+  const headingLevel = HeadingTag === "h2" ? 2 : 3;
 
   return (
     <section
@@ -36,6 +38,7 @@ export function CollapsibleSection({
           "rounded-lg border border-surface-border bg-surface-raised/80",
         className,
       )}
+      aria-labelledby={`${panelId}-trigger`}
     >
       <button
         type="button"
@@ -51,14 +54,16 @@ export function CollapsibleSection({
           open && isPanel && "border-surface-border",
         )}
       >
-        <HeadingTag
+        <span
+          role="heading"
+          aria-level={headingLevel}
           className={cn(
             "text-xs font-semibold uppercase tracking-wider text-gray-400",
             open && "text-gray-300",
           )}
         >
           {title}
-        </HeadingTag>
+        </span>
         <ChevronDown
           className={cn(
             "h-4 w-4 shrink-0 text-gray-500 transition-transform",
@@ -68,7 +73,7 @@ export function CollapsibleSection({
         />
       </button>
       {open && (
-        <div id={panelId} role="region" aria-labelledby={`${panelId}-trigger`}>
+        <div id={panelId} role="region">
           <div
             className={cn(
               isPanel && "px-3 pb-3 pt-1",

@@ -2,11 +2,16 @@
 
 import {
   Check,
+  ClipboardPaste,
+  Copy,
   Eye,
   Download,
+  Link2,
   Plus as PlusIcon,
+  Redo2,
   RotateCcw,
   Trash2,
+  Undo2,
   Upload,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -15,8 +20,19 @@ import {
   PLAN_IMPORT_MAX_FILE_BYTES,
   validatePlanImportJson,
 } from "@/lib/plan-import";
+import {
+  buildPlanShareUrl,
+  encodePlansPayloadForShare,
+  PLAN_SHARE_MAX_URL_CHARS,
+} from "@/lib/plan-share";
 import { HUB_TIER_MAX } from "@/lib/planner/solver";
-import { usePlannerStore, type SavedPlan } from "@/lib/store/planner-store";
+import {
+  redoPlannerState,
+  undoPlannerState,
+  usePlannerStore,
+  usePlannerTemporal,
+  type SavedPlan,
+} from "@/lib/store/planner-store";
 import type { PlannerConfig } from "@/lib/planner/types";
 
 interface ExportShape {
@@ -49,8 +65,13 @@ export function PlanToolbar({
   const deletePlan = usePlannerStore((s) => s.deletePlan);
   const setObjective = usePlannerStore((s) => s.setObjective);
   const setMaxCompletedHubTier = usePlannerStore((s) => s.setMaxCompletedHubTier);
+  const setSomersloopAmplification = usePlannerStore(
+    (s) => s.setSomersloopAmplification,
+  );
   const replacePlans = usePlannerStore((s) => s.replacePlans);
   const clearRecipeOverrides = usePlannerStore((s) => s.clearRecipeOverrides);
+  const canUndo = usePlannerTemporal((t) => t.pastStates.length > 0);
+  const canRedo = usePlannerTemporal((t) => t.futureStates.length > 0);
   const plan = plans[activePlanId];
   const overrideCount =
     (plan?.config.enabledAlternates.length ?? 0) +
@@ -62,6 +83,7 @@ export function PlanToolbar({
   const hiddenCount = hiddenSectionIds.length;
   const [isSectionsMenuOpen, setIsSectionsMenuOpen] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  const [shareError, setShareError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sectionsMenuRef = useRef<HTMLDivElement>(null);
 
@@ -88,6 +110,50 @@ export function PlanToolbar({
 
   const objective: PlannerConfig["objective"] =
     plan.config.objective ?? "buildings";
+
+  const handleCopyShareLink = async () => {
+    setShareError(null);
+    const payload: ExportShape = { version: 1, plans, activePlanId };
+    const encoded = encodePlansPayloadForShare(payload);
+    const url = buildPlanShareUrl(encoded);
+    if (url.length > PLAN_SHARE_MAX_URL_CHARS) {
+      setShareError(
+        "This plan is too large for a URL. Export JSON and send the file instead.",
+      );
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      setShareError("Could not copy to the clipboard.");
+    }
+  };
+
+  const handleCopyJson = async () => {
+    setShareError(null);
+    const payload: ExportShape = { version: 1, plans, activePlanId };
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(payload));
+    } catch {
+      setShareError("Could not copy to the clipboard.");
+    }
+  };
+
+  const handlePasteJson = async () => {
+    setImportError(null);
+    setShareError(null);
+    try {
+      const text = await navigator.clipboard.readText();
+      const result = validatePlanImportJson(text);
+      if (!result.ok) {
+        setImportError(result.error);
+        return;
+      }
+      replacePlans(result.data.plans, result.data.activePlanId);
+    } catch {
+      setImportError("Could not read the clipboard.");
+    }
+  };
 
   const handleExport = () => {
     const payload: ExportShape = { version: 1, plans, activePlanId };
@@ -130,17 +196,20 @@ export function PlanToolbar({
 
   return (
     <div className="card flex flex-col gap-2 p-2 lg:flex-row lg:flex-wrap lg:items-center">
-      {importError && (
+      {(importError || shareError) && (
         <div
           className="flex w-full basis-full items-start justify-between gap-2 rounded-md border border-red-500/40 bg-red-500/10 px-2 py-1.5 text-xs text-red-200"
           role="alert"
         >
-          <span>{importError}</span>
+          <span>{importError ?? shareError}</span>
           <button
             type="button"
             className="shrink-0 rounded px-1 text-red-100/90 hover:bg-red-500/20"
-            onClick={() => setImportError(null)}
-            aria-label="Dismiss import error"
+            onClick={() => {
+              setImportError(null);
+              setShareError(null);
+            }}
+            aria-label="Dismiss error"
           >
             ×
           </button>
@@ -214,6 +283,35 @@ export function PlanToolbar({
             <option value="buildings">Min buildings</option>
             <option value="raw">Min raw inputs</option>
           </select>
+        </label>
+        <label
+          className="flex max-w-[14rem] flex-col gap-0.5 text-xs text-gray-400"
+          title="Somersloop production amplification (Alien Tech): more output per machine, same inputs per cycle, higher power. 100% = all slots filled (+100% output, ×4 power at 100% clock)."
+        >
+          <span className="hidden sm:inline">Somersloop</span>
+          <span className="text-[10px] leading-tight text-gray-500 sm:hidden">
+            S.loop
+          </span>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={5}
+            value={Math.round((plan.config.somersloopAmplification ?? 0) * 100)}
+            onChange={(e) => {
+              const pct = Number(e.target.value);
+              if (!Number.isFinite(pct) || pct <= 0) {
+                setSomersloopAmplification(undefined);
+              } else {
+                setSomersloopAmplification(pct / 100);
+              }
+            }}
+            className="h-1.5 w-full min-w-[6rem] cursor-pointer accent-violet-500"
+            aria-label="Somersloop amplification percent"
+          />
+          <span className="text-[10px] tabular-nums text-gray-500">
+            {Math.round((plan.config.somersloopAmplification ?? 0) * 100)}% slots
+          </span>
         </label>
         {overrideCount > 0 && (
           <button
@@ -292,9 +390,56 @@ export function PlanToolbar({
         </button>
         <button
           type="button"
+          onClick={() => undoPlannerState()}
+          disabled={!canUndo}
+          className="btn disabled:opacity-40"
+          title="Undo"
+          aria-label="Undo"
+        >
+          <Undo2 className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={() => redoPlannerState()}
+          disabled={!canRedo}
+          className="btn disabled:opacity-40"
+          title="Redo"
+          aria-label="Redo"
+        >
+          <Redo2 className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={() => void handleCopyShareLink()}
+          className="btn"
+          title="Copy link with plan (JSON in URL hash)"
+        >
+          <Link2 className="h-3.5 w-3.5" />
+          <span className="hidden lg:inline">Share link</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => void handleCopyJson()}
+          className="btn"
+          title="Copy all plans as JSON text"
+        >
+          <Copy className="h-3.5 w-3.5" />
+          <span className="hidden lg:inline">Copy JSON</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => void handlePasteJson()}
+          className="btn"
+          title="Paste JSON from clipboard (replaces all plans like Import)"
+        >
+          <ClipboardPaste className="h-3.5 w-3.5" />
+          <span className="hidden lg:inline">Paste</span>
+        </button>
+        <button
+          type="button"
           onClick={handleExport}
           className="btn"
-          title="Export all plans as JSON"
+          title="Export all plans as JSON file"
         >
           <Download className="h-3.5 w-3.5" />
           <span className="hidden sm:inline">Export</span>
@@ -306,7 +451,7 @@ export function PlanToolbar({
             fileInputRef.current?.click();
           }}
           className="btn"
-          title="Import plans JSON"
+          title="Import plans JSON file"
         >
           <Upload className="h-3.5 w-3.5" />
           <span className="hidden sm:inline">Import</span>

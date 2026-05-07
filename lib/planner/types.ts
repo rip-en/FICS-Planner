@@ -46,6 +46,12 @@ export interface PlannerConfig {
    */
   providedInputs?: string[];
   /**
+   * Items/min you already supply from outside this plan. The solver can draw
+   * at most this much from the "external" source; the rest must be produced
+   * here. Takes precedence over `providedInputs` for the same item.
+   */
+  providedInputCaps?: Record<string, number>;
+  /**
    * Per-alternate input multipliers (1 = default recipe values).
    * Lets you experiment with custom alternate ingredient ratios.
    */
@@ -55,6 +61,12 @@ export interface PlannerConfig {
    * unlocked only at a higher milestone tier are excluded from the planner.
    */
   maxCompletedHubTier?: number;
+  /**
+   * Somersloop production amplification (MAM unlock): 0 = off, 1 = all slots
+   * filled on amplifiable machines. Boosts output rate and power use; inputs
+   * per machine stay at base recipe rates (wiki: output scales as 1+f, power as (1+f)² at 100% clock).
+   */
+  somersloopAmplification?: number;
 }
 
 export const DEFAULT_PLANNER_CONFIG: PlannerConfig = {
@@ -65,5 +77,6 @@ export const DEFAULT_PLANNER_CONFIG: PlannerConfig = {
   rawCaps: undefined,
   excludedRawInputs: undefined,
   providedInputs: undefined,
+  providedInputCaps: undefined,
   alternateInputRatios: undefined,
 };

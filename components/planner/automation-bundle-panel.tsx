@@ -1,9 +1,10 @@
 "use client";
 
 import Fuse from "fuse.js";
-import { Hash, Layers, Loader2, Sparkles, X } from "lucide-react";
+import { Layers, Loader2, Sparkles, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ItemIcon } from "@/components/item-icon";
+import { PlannerCollapsiblePanel } from "@/components/planner/planner-collapsible-panel";
 import { CollapsibleSection } from "@/components/ui/collapsible-section";
 import { SearchInput } from "@/components/ui/search-input";
 import { allItems, getItem } from "@/lib/data";
@@ -22,6 +23,7 @@ import { cn, formatBuildingsCount, formatRate } from "@/lib/utils";
 interface AutomationBundlePanelProps {
   config: PlannerConfig;
   onInspect: (itemId: string) => void;
+  expandPanelRevision?: number;
 }
 
 interface PathMetrics {
@@ -110,8 +112,9 @@ function buildDerivedBundleState(
   if (beltSnap && !beltSnap.noop) {
     pathOptions.push({
       id: "path-belt-tidy",
-      label: "Path: belt-tidy raw",
-      hint: "Scales the bundle so the dominant raw draw lands on a clean belt step (same as the tidy button). Uses min-raw objective.",
+      label: "Suggestion: belt-step dominant raw",
+      hint:
+        "Scales the bundle down slightly so your heaviest raw sits on a clean line (60 / 120 / 180 … /min). Easier to saturate belts and match extractor belts than a fuzzy draw like 987.9/min — compare raw totals vs max-under-caps. Min-raw objective.",
       objective: "raw",
       rates: beltSnap.rates,
       metrics: evaluateRates(config, beltSnap.rates, "raw"),
@@ -121,8 +124,9 @@ function buildDerivedBundleState(
   if (perfect) {
     pathOptions.push({
       id: "path-perfect-numbers",
-      label: "Path: perfect-ish numbers",
-      hint: "Searches scales so raw draw and targets land near nice belt rates, favoring less byproduct excess.",
+      label: "Suggestion: nice throughput mix",
+      hint:
+        "Explores scales where several raw pulls and product targets land near friendly steps (180 / 120 / 100 / 60 …), while keeping excess byproduct low — good when no single raw dominates.",
       objective: "raw",
       rates: perfect.rates,
       metrics: evaluateRates(config, perfect.rates, "raw"),
@@ -135,6 +139,7 @@ function buildDerivedBundleState(
 export function AutomationBundlePanel({
   config,
   onInspect,
+  expandPanelRevision,
 }: AutomationBundlePanelProps) {
   const upsertTarget = usePlannerStore((s) => s.upsertTarget);
   const setObjective = usePlannerStore((s) => s.setObjective);
@@ -236,8 +241,10 @@ export function AutomationBundlePanel({
         disabledRecipes: [...config.disabledRecipes].sort(),
         excludedRawInputs: [...(config.excludedRawInputs ?? [])].sort(),
         providedInputs: [...(config.providedInputs ?? [])].sort(),
+        providedInputCaps: config.providedInputCaps ?? {},
         alternateInputRatios: config.alternateInputRatios ?? {},
         maxCompletedHubTier: config.maxCompletedHubTier ?? null,
+        somersloopAmplification: config.somersloopAmplification ?? null,
       }),
     [
       config.alternateInputRatios,
@@ -247,7 +254,9 @@ export function AutomationBundlePanel({
       config.maxCompletedHubTier,
       config.objective,
       config.providedInputs,
+      config.providedInputCaps,
       config.rawCaps,
+      config.somersloopAmplification,
     ],
   );
   const cacheKey = `${draftSignature}::${configSignature}`;
@@ -291,29 +300,30 @@ export function AutomationBundlePanel({
   const beltSnap = derived.beltSnap;
   const pathOptions = derived.pathOptions;
 
-  const handleBeltSnap = useCallback(() => {
-    if (draftIds.length === 0) return;
-    if (!beltSnap || beltSnap.noop) return;
-    applyPath(beltSnap.rates, "raw");
-  }, [applyPath, beltSnap, draftIds.length]);
-
   return (
-    <div className="card flex flex-col gap-3 p-3 sm:gap-4 sm:p-4">
-      <header>
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-400">
+    <PlannerCollapsiblePanel
+      id="automation-bundles"
+      expandRevision={expandPanelRevision}
+      title={
+        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-gray-400">
+          <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-brand" />
           Multi-item automation
-        </h2>
-        <p className="mt-1 text-xs leading-relaxed text-gray-500">
+        </div>
+      }
+    >
+      <div className="flex flex-col gap-3 px-3 pb-3 sm:gap-4 sm:px-4 sm:pb-4">
+        <p className="text-xs leading-relaxed text-gray-500">
           Pick several end products (for example Radio Control Unit and Crystal
           Oscillator). Apply starter rates from one machine each, or scale the
-          whole bundle to fit your raw budgets. Fractional raw pulls (for example
-          147/min ore) usually mean the bundle scale sits between clean belt
-          lines — use{" "}
-          <span className="font-medium text-gray-400">Tidy raw (÷60)</span> after
-          max-under-caps, or nudge individual targets in Targets until raw inputs
-          land on numbers you like (60 / 120 / 180 per minute per Mk belt tier).
+          whole bundle to fit your raw budgets. When numbers look awkward (for
+          example 987.9/min ore vs 1200/min), use the{" "}
+          <span className="font-medium text-gray-400">
+            throughput suggestions
+          </span>{" "}
+          below after previewing max-under-caps — they propose scales where raw
+          and products land on clean steps so belts and nodes are easier to max
+          out. You can always nudge targets manually.
         </p>
-      </header>
 
       <CollapsibleSection
         variant="panel"
@@ -467,14 +477,14 @@ export function AutomationBundlePanel({
             {hasCaps && preview.unbounded && draftIds.length > 0 && (
               <p className="mt-2 text-gray-500">
                 Raw budgets are not binding yet, so there is no fixed “ceiling” to
-                snap against. Tighten a cap or set targets manually, then try belt
-                tidy again — or adjust one end product up/down a little; raw
+                snap against. Tighten a cap or set targets manually, then try the
+                suggestions again — or adjust one end product up/down a little; raw
                 numbers track those targets proportionally.
               </p>
             )}
             {beltSnap && !beltSnap.noop && (
               <p className="mt-2 text-gray-500">
-                Belt tidy (preview): scale the bundle so{" "}
+                Belt-step suggestion (preview): scale the bundle so{" "}
                 <button
                   type="button"
                   onClick={() => onInspect(beltSnap.pivotItemId)}
@@ -514,7 +524,14 @@ export function AutomationBundlePanel({
 
         {!isComputing && pathOptions.length > 0 && (
           <div className="rounded-md border border-surface-border bg-surface p-3 text-xs text-gray-400">
-            <div className="mb-2 font-medium text-gray-300">Generated paths</div>
+            <div className="mb-1 font-medium text-gray-300">
+              Throughput suggestions
+            </div>
+            <p className="mb-2 text-[11px] leading-relaxed text-gray-500">
+              Compare these against min-buildings / min-raw baselines. Belt-step
+              and nice-mix paths bias toward round rates (full belts, tidy
+              extractor lines) — often a small scale trade for easier logistics.
+            </p>
             <div className="space-y-2">
               {pathOptions.map((option) => (
                 <div
@@ -557,9 +574,9 @@ export function AutomationBundlePanel({
               ))}
             </div>
             <p className="mt-2 text-gray-500">
-              Perfect-ish keeps fractional machine counts if needed, but tries to
-              make upstream raw and waste rates cleaner so your logistics are easier
-              to lay out.
+              Nice-mix searches several scales; belt-step focuses on snapping the
+              dominant raw to standard belt throughput so you can run nodes and
+              lines closer to capacity without fighting odd fractions.
             </p>
           </div>
         )}
@@ -596,36 +613,9 @@ export function AutomationBundlePanel({
             <Sparkles className="h-3.5 w-3.5" />
             Apply: max under raw caps
           </button>
-          <button
-            type="button"
-            disabled={
-              draftIds.length === 0 ||
-              isComputing ||
-              preview === null ||
-              preview.scale <= 0 ||
-              !canOfferBeltSnap(hasCaps, preview) ||
-              beltSnap === null ||
-              beltSnap.noop
-            }
-            onClick={handleBeltSnap}
-            className="btn min-h-10 flex-1 touch-manipulation justify-center gap-1.5 text-xs sm:min-h-0"
-            title={
-              preview === null
-                ? undefined
-                : !canOfferBeltSnap(hasCaps, preview)
-                  ? "When caps do not bind the bundle, set stricter budgets or tune targets for clean raw numbers"
-                  : beltSnap?.noop
-                    ? "Dominant raw is already on a 60/min belt step at this scale"
-                    : beltSnap === null
-                      ? "This bundle cannot be snapped to a belt step with the current recipe set"
-                      : "Scale the bundle down slightly so the heaviest raw lands on a 60/min belt line (e.g. 120 instead of 147)"
-            }
-          >
-            <Hash className="h-3.5 w-3.5" />
-            Apply: tidy raw (÷60)
-          </button>
         </div>
       </CollapsibleSection>
-    </div>
+      </div>
+    </PlannerCollapsiblePanel>
   );
 }

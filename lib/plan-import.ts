@@ -114,6 +114,19 @@ function normalizeConfig(raw: unknown): PlannerConfig | null {
     next.providedInputs = xs.length ? xs : undefined;
   }
 
+  const providedCaps = raw.providedInputCaps;
+  if (providedCaps !== undefined) {
+    if (!isRecord(providedCaps)) return null;
+    const capMap: Record<string, number> = {};
+    for (const [k, v] of Object.entries(providedCaps)) {
+      if (k.length > 200) return null;
+      const n = asFiniteNumber(v);
+      if (n === null || n < 0 || n > 1e9) return null;
+      if (n > 0) capMap[k] = n;
+    }
+    next.providedInputCaps = Object.keys(capMap).length ? capMap : undefined;
+  }
+
   const ratios = raw.alternateInputRatios;
   if (ratios !== undefined) {
     if (!isRecord(ratios)) return null;
@@ -133,6 +146,13 @@ function normalizeConfig(raw: unknown): PlannerConfig | null {
       return null;
     }
     next.maxCompletedHubTier = hub;
+  }
+
+  const sloop = raw.somersloopAmplification;
+  if (sloop !== undefined) {
+    const n = asFiniteNumber(sloop);
+    if (n === null || n < 0 || n > 1) return null;
+    if (n > 0) next.somersloopAmplification = n;
   }
 
   return next;

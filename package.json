@@ -34,6 +34,7 @@
     "etl:fetch": "curl -L https://raw.githubusercontent.com/greeny/SatisfactoryTools/master/data/data1.0.json -o data/raw/data.json && npm run etl"
   },
   "dependencies": {
+    "@dagrejs/dagre": "^3.0.0",
     "clsx": "^2.1.1",
     "fuse.js": "^7.0.0",
     "javascript-lp-solver": "^0.4.24",
@@ -41,6 +42,7 @@
     "next": "^14.2.18",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "zundo": "^2.3.0",
     "zustand": "^5.0.1"
   },
   "devDependencies": {

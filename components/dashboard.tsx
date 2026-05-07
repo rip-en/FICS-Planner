@@ -20,12 +20,17 @@ import {
   PlanToolbar,
   type PlannerSectionSetting,
 } from "@/components/planner/plan-toolbar";
+import { ExternalSupplyPanel } from "@/components/planner/external-supply-panel";
 import { TargetsPanel } from "@/components/planner/targets-panel";
 import { AltRecipeToggles } from "@/components/planner/alt-recipes-toggles";
 import { ResultsTable } from "@/components/planner/results-table";
 import { getRecipe, recipesProducing } from "@/lib/data";
 import { useMediaQuery } from "@/lib/hooks/use-media-query";
 import { computeProducibleItemIds } from "@/lib/planner/inventory-insight";
+import {
+  decodePlansFromSharePayload,
+  parseHashPlanFragment,
+} from "@/lib/plan-share";
 import { solvePlan } from "@/lib/planner/solver";
 import type { SolverResult } from "@/lib/planner/types";
 import {
@@ -42,11 +47,13 @@ const DASHBOARD_SECTION_SETTINGS: PlannerSectionSetting[] = [
   { id: "suggestions", label: "Suggestions" },
   { id: "automation-bundles", label: "Automation bundles" },
   { id: "targets", label: "Targets" },
+  { id: "external-supply", label: "External supply / omit" },
   { id: "recipe-toggles", label: "Recipe toggles" },
   { id: "results", label: "Results panel" },
   { id: "summary-cards", label: "Summary cards" },
   { id: "recipes-in-use", label: "Recipes in use" },
   { id: "production-chains", label: "Production chains" },
+  { id: "flow-diagram", label: "Flow diagram" },
   { id: "missing-inputs", label: "Missing inputs" },
   { id: "raw-inputs", label: "Raw inputs" },
   { id: "already-made-inputs", label: "Already-made inputs" },
@@ -55,6 +62,27 @@ const DASHBOARD_SECTION_SETTINGS: PlannerSectionSetting[] = [
 
 const HIDDEN_DASHBOARD_SECTIONS_STORAGE_KEY =
   "factory:hidden-dashboard-sections";
+
+/** Collapsible card id to expand when a nested toolbar section is shown again. */
+function panelExpandKeyForSection(sectionId: string): string | undefined {
+  switch (sectionId) {
+    case "inventory-budget":
+    case "capped-inputs":
+    case "target-throughput":
+    case "suggestions":
+      return "inventory-budget";
+    case "automation-bundles":
+      return "automation-bundles";
+    case "targets":
+      return "targets-panel";
+    case "recipe-toggles":
+      return "alt-recipes";
+    case "external-supply":
+      return "external-supply";
+    default:
+      return undefined;
+  }
+}
 
 export function Dashboard() {
   const { plan } = useActivePlan();
@@ -71,6 +99,9 @@ export function Dashboard() {
   const isDesktopLayout = useMediaQuery("(min-width: 1024px)");
   const [mobileTab, setMobileTab] = useState<MobilePlannerTab>("plan");
   const [hiddenSectionIds, setHiddenSectionIds] = useState<string[]>([]);
+  const [panelExpandRevision, setPanelExpandRevision] = useState<
+    Record<string, number>
+  >({});
   const [sectionPrefsReady, setSectionPrefsReady] = useState(false);
   const [solverResult, setSolverResult] = useState<SolverResult | null>(null);
   const [solverWorking, setSolverWorking] = useState(false);
@@ -94,6 +125,31 @@ export function Dashboard() {
     if (isDesktopLayout) return;
     if (selected) setMobileTab("detail");
   }, [selected, isDesktopLayout]);
+
+  useEffect(() => {
+    const applyPlanFromUrlHash = () => {
+      const encoded = parseHashPlanFragment(window.location.hash);
+      if (!encoded) return;
+      const parsed = decodePlansFromSharePayload(encoded);
+      if (!parsed.ok) return;
+      usePlannerStore
+        .getState()
+        .replacePlans(parsed.data.plans, parsed.data.activePlanId);
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${window.location.search}`,
+      );
+    };
+
+    const unsubHydration = usePlannerStore.persist.onFinishHydration(() => {
+      applyPlanFromUrlHash();
+    });
+    if (usePlannerStore.persist.hasHydrated()) {
+      applyPlanFromUrlHash();
+    }
+    return unsubHydration;
+  }, []);
 
   useEffect(() => {
     try {
@@ -134,7 +190,17 @@ export function Dashboard() {
 
   const handleToggleSectionVisibility = useCallback((sectionId: string) => {
     setHiddenSectionIds((previousIds) => {
-      if (previousIds.includes(sectionId)) {
+      const wasHidden = previousIds.includes(sectionId);
+      if (wasHidden) {
+        const panelKey = panelExpandKeyForSection(sectionId);
+        if (panelKey) {
+          queueMicrotask(() => {
+            setPanelExpandRevision((prev) => ({
+              ...prev,
+              [panelKey]: (prev[panelKey] ?? 0) + 1,
+            }));
+          });
+        }
         return previousIds.filter((id) => id !== sectionId);
       }
       return [...previousIds, sectionId];
@@ -305,6 +371,7 @@ export function Dashboard() {
               <InventoryBudgetPanel
                 config={plan.config}
                 hiddenSectionIds={hiddenSectionIds}
+                expandPanelRevision={panelExpandRevision["inventory-budget"] ?? 0}
                 onInspect={pushItem}
                 onAddTargetAtRate={(itemId, rate) => {
                   if (targets.some((t) => t.itemId === itemId))
@@ -317,10 +384,16 @@ export function Dashboard() {
               <AutomationBundlePanel
                 config={plan.config}
                 onInspect={pushItem}
+                expandPanelRevision={
+                  panelExpandRevision["automation-bundles"] ?? 0
+                }
               />
             )}
             {!hiddenSectionIdSet.has("targets") && (
               <TargetsPanel
+                expandPanelRevision={
+                  panelExpandRevision["targets-panel"] ?? 0
+                }
                 targets={plan?.config.targets ?? []}
                 config={
                   plan?.config ?? {
@@ -331,8 +404,10 @@ export function Dashboard() {
                     rawCaps: undefined,
                     excludedRawInputs: undefined,
                     providedInputs: undefined,
+                    providedInputCaps: undefined,
                     alternateInputRatios: undefined,
                     maxCompletedHubTier: undefined,
+                    somersloopAmplification: undefined,
                   }
                 }
                 hubProducibleItemIds={hubProducibleItemIds}
@@ -340,18 +415,28 @@ export function Dashboard() {
                 onInspect={pushItem}
               />
             )}
+            {plan && !hiddenSectionIdSet.has("external-supply") && (
+              <ExternalSupplyPanel
+                config={plan.config}
+                onInspect={pushItem}
+                expandPanelRevision={
+                  panelExpandRevision["external-supply"] ?? 0
+                }
+              />
+            )}
             {!hiddenSectionIdSet.has("recipe-toggles") && (
               <AltRecipeToggles
                 enabled={enabledAlternates}
                 recipesInUse={recipesInUse}
                 alternateInputRatios={plan?.config.alternateInputRatios ?? {}}
+                expandPanelRevision={panelExpandRevision["alt-recipes"] ?? 0}
               />
             )}
             {!hiddenSectionIdSet.has("results") && solverResult && (
               <ResultsTable
                 result={solverResult}
                 onInspect={pushItem}
-                providedInputs={plan?.config.providedInputs ?? []}
+                fullyProvidedInputs={plan?.config.providedInputs ?? []}
                 onToggleProvidedInput={setProvidedInput}
                 hiddenSectionIds={hiddenSectionIds}
               />

@@ -1,7 +1,11 @@
 "use client";
 
 import { create } from "zustand";
+import { useStore } from "zustand";
 import { persist } from "zustand/middleware";
+import type { StoreApi } from "zustand";
+import type { TemporalState } from "zundo";
+import { temporal } from "zundo";
 import { knownAlternates } from "@/lib/planner/solver";
 import type { PlannerConfig, PlannerTarget } from "@/lib/planner/types";
 import { DEFAULT_PLANNER_CONFIG } from "@/lib/planner/types";
@@ -39,12 +43,19 @@ interface PlannerState {
   setRawExcluded: (itemId: string, excluded: boolean) => void;
   /** Mark any item as externally provided (already made elsewhere). */
   setProvidedInput: (itemId: string, provided: boolean) => void;
+  /**
+   * External supply rate (items/min) for an item, or null to clear.
+   * Setting a cap removes full "unlimited" omit for that item.
+   */
+  setProvidedInputCap: (itemId: string, ratePerMin: number | null) => void;
   /** Set custom alternate-recipe input multiplier (1 = default). */
   setAlternateInputRatio: (recipeId: string, ratio: number) => void;
   /**
    * Limit planner to hub milestone recipes through this tier (undefined = no limit).
    */
   setMaxCompletedHubTier: (tier: number | undefined) => void;
+  /** 0–1 fraction of Somersloop slots filled on amplifiable machines; undefined = off. */
+  setSomersloopAmplification: (fraction: number | undefined) => void;
   clearRawCaps: () => void;
   clearTargets: () => void;
   clearRecipeOverrides: () => void;
@@ -54,6 +65,8 @@ interface PlannerState {
   deletePlan: (id: string) => void;
   replacePlans: (plans: Record<string, SavedPlan>, activePlanId: string) => void;
 }
+
+type PlannerTemporalSlice = Pick<PlannerState, "plans" | "activePlanId">;
 
 const nid = () => Math.random().toString(36).slice(2, 10);
 
@@ -74,7 +87,8 @@ const initialPlan = makePlan("My factory", DEFAULT_PLANNER_CONFIG, "default");
 
 export const usePlannerStore = create<PlannerState>()(
   persist(
-    (set, get) => ({
+    temporal(
+      (set, get, store) => ({
       activePlanId: initialPlan.id,
       plans: { [initialPlan.id]: initialPlan },
 
@@ -319,13 +333,49 @@ export const usePlannerStore = create<PlannerState>()(
           const plan = state.plans[state.activePlanId];
           if (!plan) return {};
           const nextProvided = new Set(plan.config.providedInputs ?? []);
-          if (provided) nextProvided.add(itemId);
-          else nextProvided.delete(itemId);
+          const nextCaps = { ...(plan.config.providedInputCaps ?? {}) };
+          if (provided) {
+            nextProvided.add(itemId);
+            delete nextCaps[itemId];
+          } else {
+            nextProvided.delete(itemId);
+          }
           const nextPlan: SavedPlan = {
             ...plan,
             updatedAt: Date.now(),
             config: {
               ...plan.config,
+              providedInputs: nextProvided.size
+                ? Array.from(nextProvided)
+                : undefined,
+              providedInputCaps: Object.keys(nextCaps).length
+                ? nextCaps
+                : undefined,
+            },
+          };
+          return { plans: { ...state.plans, [plan.id]: nextPlan } };
+        }),
+
+      setProvidedInputCap: (itemId, ratePerMin) =>
+        set((state) => {
+          const plan = state.plans[state.activePlanId];
+          if (!plan) return {};
+          const nextCaps = { ...(plan.config.providedInputCaps ?? {}) };
+          const nextProvided = new Set(plan.config.providedInputs ?? []);
+          if (ratePerMin === null || !Number.isFinite(ratePerMin) || ratePerMin <= 0) {
+            delete nextCaps[itemId];
+          } else {
+            nextCaps[itemId] = ratePerMin;
+            nextProvided.delete(itemId);
+          }
+          const nextPlan: SavedPlan = {
+            ...plan,
+            updatedAt: Date.now(),
+            config: {
+              ...plan.config,
+              providedInputCaps: Object.keys(nextCaps).length
+                ? nextCaps
+                : undefined,
               providedInputs: nextProvided.size
                 ? Array.from(nextProvided)
                 : undefined,
@@ -364,6 +414,31 @@ export const usePlannerStore = create<PlannerState>()(
           const nextConfig = { ...plan.config };
           if (tier === undefined) delete nextConfig.maxCompletedHubTier;
           else nextConfig.maxCompletedHubTier = tier;
+          const nextPlan: SavedPlan = {
+            ...plan,
+            updatedAt: Date.now(),
+            config: nextConfig,
+          };
+          return { plans: { ...state.plans, [plan.id]: nextPlan } };
+        }),
+
+      setSomersloopAmplification: (fraction) =>
+        set((state) => {
+          const plan = state.plans[state.activePlanId];
+          if (!plan) return {};
+          const nextConfig = { ...plan.config };
+          if (
+            fraction === undefined ||
+            !Number.isFinite(fraction) ||
+            fraction <= 0
+          ) {
+            delete nextConfig.somersloopAmplification;
+          } else {
+            nextConfig.somersloopAmplification = Math.min(
+              1,
+              Math.max(0, fraction),
+            );
+          }
           const nextPlan: SavedPlan = {
             ...plan,
             updatedAt: Date.now(),
@@ -433,12 +508,34 @@ export const usePlannerStore = create<PlannerState>()(
           return { plans: rest, activePlanId: nextActive };
         }),
 
-      replacePlans: (plans, activePlanId) =>
-        set(() => ({ plans, activePlanId })),
+      replacePlans: (plans, activePlanId) => {
+        const temporalStore = (
+          store as unknown as {
+            temporal: StoreApi<TemporalState<PlannerTemporalSlice>>;
+          }
+        ).temporal;
+        const t = temporalStore.getState();
+        t.pause();
+        set({ plans, activePlanId });
+        t.resume();
+        t.clear();
+      },
     }),
+      {
+        limit: 50,
+        partialize: (state) => ({
+          plans: state.plans,
+          activePlanId: state.activePlanId,
+        }),
+      },
+    ),
     {
       name: "factory:plans",
       version: 1,
+      partialize: (state) => ({
+        plans: state.plans,
+        activePlanId: state.activePlanId,
+      }),
       merge: (persistedState, currentState) => {
         const p = persistedState as Partial<PlannerState> | undefined;
         if (!p || typeof p !== "object" || !p.plans) {
@@ -462,6 +559,31 @@ export const usePlannerStore = create<PlannerState>()(
     },
   ),
 );
+
+function plannerTemporalApi(): StoreApi<
+  TemporalState<PlannerTemporalSlice>
+> {
+  return (
+    usePlannerStore as unknown as {
+      temporal: StoreApi<TemporalState<PlannerTemporalSlice>>;
+    }
+  ).temporal;
+}
+
+/** Subscribe to undo stack depth (for toolbar buttons). */
+export function usePlannerTemporal<T>(
+  selector: (t: TemporalState<PlannerTemporalSlice>) => T,
+): T {
+  return useStore(plannerTemporalApi(), selector);
+}
+
+export function undoPlannerState(): void {
+  plannerTemporalApi().getState().undo();
+}
+
+export function redoPlannerState(): void {
+  plannerTemporalApi().getState().redo();
+}
 
 export const useActivePlan = () => {
   const activePlanId = usePlannerStore((s) => s.activePlanId);

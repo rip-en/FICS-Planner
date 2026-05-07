@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, Loader2, Minus, Plus, Trash2 } from "lucide-react";
+import { Loader2, Minus, Plus, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { getItem } from "@/lib/data";
 import { solvePlan } from "@/lib/planner/solver";
@@ -8,7 +8,8 @@ import { usePlannerStore } from "@/lib/store/planner-store";
 import type { PlannerConfig, PlannerTarget } from "@/lib/planner/types";
 import { ItemIcon } from "@/components/item-icon";
 import { PlannerEmptyState } from "@/components/planner/empty-state";
-import { cn, formatRate } from "@/lib/utils";
+import { PlannerCollapsiblePanel } from "@/components/planner/planner-collapsible-panel";
+import { formatRate } from "@/lib/utils";
 
 interface TargetsPanelProps {
   targets: PlannerTarget[];
@@ -18,6 +19,7 @@ interface TargetsPanelProps {
   /** While true, hub warnings are hidden (reachability scan in progress). */
   hubTierScanPending?: boolean;
   onInspect: (itemId: string) => void;
+  expandPanelRevision?: number;
 }
 
 interface MarginalRawCost {
@@ -37,10 +39,10 @@ export function TargetsPanel({
   hubProducibleItemIds = null,
   hubTierScanPending = false,
   onInspect,
+  expandPanelRevision,
 }: TargetsPanelProps) {
   const setRate = usePlannerStore((s) => s.setTargetRate);
   const remove = usePlannerStore((s) => s.removeTarget);
-  const [bodyOpen, setBodyOpen] = useState(true);
   const [costByTarget, setCostByTarget] = useState<Record<string, MarginalRawCost>>(
     {},
   );
@@ -61,20 +63,24 @@ export function TargetsPanel({
         rawCaps: config.rawCaps ?? {},
         excludedRawInputs: config.excludedRawInputs ?? [],
         providedInputs: config.providedInputs ?? [],
+        providedInputCaps: config.providedInputCaps ?? {},
         alternateInputRatios: config.alternateInputRatios ?? {},
         enabledAlternates: [...config.enabledAlternates].sort(),
         disabledRecipes: [...config.disabledRecipes].sort(),
         maxCompletedHubTier: config.maxCompletedHubTier,
+        somersloopAmplification: config.somersloopAmplification ?? null,
       }),
     [
       config.disabledRecipes,
       config.enabledAlternates,
       config.excludedRawInputs,
       config.providedInputs,
+      config.providedInputCaps,
       config.alternateInputRatios,
       config.objective,
       config.rawCaps,
       config.maxCompletedHubTier,
+      config.somersloopAmplification,
     ],
   );
 
@@ -133,43 +139,29 @@ export function TargetsPanel({
   if (targets.length === 0) return <PlannerEmptyState />;
 
   return (
-    <div className="card relative overflow-hidden">
-      <div className="belt absolute inset-x-0 top-0" aria-hidden />
-      <button
-        type="button"
-        id="targets-panel-toggle"
-        aria-expanded={bodyOpen}
-        aria-controls="targets-panel-body"
-        onClick={() => setBodyOpen((o) => !o)}
-        className="flex min-h-11 w-full touch-manipulation items-center justify-between gap-2 border-b border-surface-border px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.12em] text-gray-400 sm:min-h-0"
-      >
-        <div className="flex items-center gap-1.5">
-          <span className="inline-block h-1.5 w-1.5 rounded-full bg-brand" />
+    <PlannerCollapsiblePanel
+      id="targets-panel"
+      expandRevision={expandPanelRevision}
+      title={
+        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-gray-400">
+          <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-brand" />
           Targets
         </div>
-        <div className="flex items-center gap-2">
-          <span className="num font-normal text-gray-500">{targets.length}</span>
-          <ChevronDown
-            className={cn(
-              "h-4 w-4 shrink-0 text-gray-500 transition-transform",
-              bodyOpen && "rotate-180",
-            )}
-            aria-hidden
-          />
-        </div>
-      </button>
-      {hubTierScanPending && config.maxCompletedHubTier !== undefined && (
-        <p className="border-b border-surface-border px-3 py-2 text-[11px] text-gray-500">
-          Checking hub-tier reachability for target warnings…
-        </p>
-      )}
-      {bodyOpen && (
-        <ul
-          id="targets-panel-body"
-          role="region"
-          aria-labelledby="targets-panel-toggle"
-          className="divide-y divide-surface-border"
-        >
+      }
+      trailing={
+        <span className="num text-xs font-normal text-gray-500">
+          {targets.length}
+        </span>
+      }
+      banner={
+        hubTierScanPending && config.maxCompletedHubTier !== undefined ? (
+          <p className="border-b border-surface-border px-3 py-2 text-[11px] text-gray-500">
+            Checking hub-tier reachability for target warnings…
+          </p>
+        ) : undefined
+      }
+    >
+      <ul className="divide-y divide-surface-border">
           {targets.map((t) => {
             const item = getItem(t.itemId);
             if (!item) return null;
@@ -270,8 +262,7 @@ export function TargetsPanel({
               </li>
             );
           })}
-        </ul>
-      )}
-    </div>
+      </ul>
+    </PlannerCollapsiblePanel>
   );
 }

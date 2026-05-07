@@ -10,6 +10,14 @@ import {
   Target,
 } from "lucide-react";
 import { getBuilding, getItem } from "@/lib/data";
+import {
+  compareAlternateToBaseline,
+  type FlowDeltaRow,
+} from "@/lib/recipe-compare";
+import {
+  recipePeakPowerMw,
+  recipeUsesVariablePowerRange,
+} from "@/lib/recipe-power";
 import { cn, formatRate } from "@/lib/utils";
 import { ItemIcon } from "@/components/item-icon";
 import type { Recipe, RecipeIngredient, RecipeUnlockSource } from "@/types/game";
@@ -42,6 +50,10 @@ interface RecipeCardProps {
   onSetProductionPercent?: (percent: number) => void;
   /** When set, the ingredient row for this item is visually emphasized. */
   emphasizeItemId?: string;
+  /** Non-alternate recipe for the same product — drives “vs standard” impact. */
+  compareBaseline?: Recipe;
+  /** Item id used to normalize both recipes to the same output rate (usually the main product). */
+  comparePrimaryItemId?: string;
 }
 
 const SOURCE_LABELS: Record<RecipeUnlockSource, string> = {
@@ -59,6 +71,130 @@ const SOURCE_STYLES: Record<RecipeUnlockSource, string> = {
   initial: "border-surface-border text-gray-400",
   other: "border-surface-border text-gray-400",
 };
+
+function formatSignedDeltaPerMin(n: number): string {
+  const q = formatRate(Math.abs(n));
+  if (n > 0) return `+${q}`;
+  if (n < 0) return `−${q}`;
+  return "0";
+}
+
+function DeltaChip({
+  row,
+  kind,
+  onItemClick,
+}: {
+  row: FlowDeltaRow;
+  kind: "input" | "output";
+  onItemClick?: (itemId: string) => void;
+}) {
+  const item = getItem(row.itemId);
+  if (!item) return null;
+  const signed = formatSignedDeltaPerMin(row.delta);
+  const color =
+    kind === "input"
+      ? row.delta > 0
+        ? "text-rose-300/95"
+        : row.delta < 0
+          ? "text-emerald-300/95"
+          : "text-gray-400"
+      : row.delta > 0
+        ? "text-sky-300/95"
+        : row.delta < 0
+          ? "text-amber-300/95"
+          : "text-gray-400";
+  return (
+    <button
+      type="button"
+      onClick={() => onItemClick?.(item.id)}
+      className={cn(
+        "inline-flex max-w-full items-center gap-1 rounded border border-surface-border bg-surface/80 px-1.5 py-0.5 text-left transition hover:bg-surface-raised/90",
+      )}
+      title={`Standard ${formatRate(row.baseline)}/min → alternate ${formatRate(row.alternate)}/min (per 1/min product)`}
+    >
+      <ItemIcon
+        className="shrink-0"
+        iconUrl={item.iconUrl}
+        alt={item.name}
+        size={16}
+      />
+      <span className="min-w-0 truncate text-[11px] text-gray-200">
+        {item.name}
+      </span>
+      <span className={cn("shrink-0 font-mono text-[11px] tabular-nums", color)}>
+        {signed}/min
+      </span>
+    </button>
+  );
+}
+
+function AlternateImpactPanel({
+  alternate,
+  baseline,
+  primaryItemId,
+  onItemClick,
+}: {
+  alternate: Recipe;
+  baseline: Recipe;
+  primaryItemId: string;
+  onItemClick?: (itemId: string) => void;
+}) {
+  const primary = getItem(primaryItemId);
+  const diff = compareAlternateToBaseline(alternate, baseline, primaryItemId);
+  if (!diff) return null;
+  const { inputs, outputs } = diff;
+  if (inputs.length === 0 && outputs.length === 0) return null;
+
+  return (
+    <div className="mt-2 rounded-md border border-brand/25 bg-brand/[0.06] px-2 py-2">
+      <div className="mb-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-gray-500">
+        vs standard recipe
+        {primary ? (
+          <>
+            {" "}
+            · per 1/min {primary.name}
+          </>
+        ) : null}
+      </div>
+      <p className="mb-1.5 text-[10px] leading-snug text-gray-500">
+        Rates normalized to the same product output so input and byproduct
+        changes are comparable.
+      </p>
+      {inputs.length > 0 && (
+        <div className="mb-1.5">
+          <div className="mb-1 text-[10px] text-gray-500">Inputs</div>
+          <div className="flex flex-wrap gap-1">
+            {inputs.map((row) => (
+              <DeltaChip
+                key={`in-${row.itemId}`}
+                row={row}
+                kind="input"
+                onItemClick={onItemClick}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+      {outputs.length > 0 && (
+        <div>
+          <div className="mb-1 text-[10px] text-gray-500">
+            Co-products / byproducts
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {outputs.map((row) => (
+              <DeltaChip
+                key={`out-${row.itemId}`}
+                row={row}
+                kind="output"
+                onItemClick={onItemClick}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function SourceBadge({ source }: { source: RecipeUnlockSource }) {
   if (source === "initial" || source === "other") return null;
@@ -203,12 +339,20 @@ export function RecipeCard({
   productionPercent,
   onSetProductionPercent,
   emphasizeItemId,
+  compareBaseline,
+  comparePrimaryItemId,
 }: RecipeCardProps) {
   const building =
     recipe.producedIn.length > 0 ? getBuilding(recipe.producedIn[0]) : undefined;
+  const peakPowerMw = recipePeakPowerMw(recipe, building);
   const canToggleAlternate = recipe.alternate && !!onToggleAlternate;
   const canToggleDisabled = !!onToggleDisabled;
   const canUseOnly = !!onUseOnlyThis && !!hasCompetitors;
+  const showVsStandard =
+    recipe.alternate &&
+    compareBaseline &&
+    comparePrimaryItemId &&
+    compareBaseline.id !== recipe.id;
 
   return (
     <div
@@ -284,15 +428,23 @@ export function RecipeCard({
           ))}
         </div>
       </div>
+      {showVsStandard && (
+        <AlternateImpactPanel
+          alternate={recipe}
+          baseline={compareBaseline}
+          primaryItemId={comparePrimaryItemId}
+          onItemClick={onItemClick}
+        />
+      )}
       <div className="mt-2 flex min-w-0 flex-col gap-2 text-[11px] text-gray-500 @[32rem]:flex-row @[32rem]:flex-wrap @[32rem]:items-center @[32rem]:justify-between">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1.5">
           <span>Duration: {recipe.duration}s</span>
-          {recipe.maxPower > 0 && (
+          {peakPowerMw > 0 && (
             <span>
               Power:{" "}
-              {recipe.minPower === recipe.maxPower
-                ? `${recipe.maxPower} MW`
-                : `${recipe.minPower}-${recipe.maxPower} MW`}
+              {recipeUsesVariablePowerRange(recipe)
+                ? `${recipe.minPower}-${recipe.maxPower} MW`
+                : `${peakPowerMw} MW`}
             </span>
           )}
           {recipe.alternate && onSetProductionPercent && (

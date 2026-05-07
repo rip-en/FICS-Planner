@@ -5,6 +5,7 @@ import { useMemo } from "react";
 import { getBuilding, getItem, getRecipe } from "@/lib/data";
 import { buildProductionFlowEdges } from "@/lib/planner/production-flow";
 import type { SolverResult } from "@/lib/planner/types";
+import { ProductionFlowDiagram } from "@/components/planner/production-flow-diagram";
 import { CollapsibleSection } from "@/components/ui/collapsible-section";
 import {
   cn,
@@ -17,7 +18,8 @@ import { ItemIcon } from "@/components/item-icon";
 interface ResultsTableProps {
   result: SolverResult;
   onInspect: (itemId: string) => void;
-  providedInputs: string[];
+  /** Unlimited omit only — partial caps still show inputs as built in-factory. */
+  fullyProvidedInputs: string[];
   onToggleProvidedInput: (itemId: string, provided: boolean) => void;
   hiddenSectionIds?: string[];
 }
@@ -25,7 +27,7 @@ interface ResultsTableProps {
 export function ResultsTable({
   result,
   onInspect,
-  providedInputs,
+  fullyProvidedInputs,
   onToggleProvidedInput,
   hiddenSectionIds = [],
 }: ResultsTableProps) {
@@ -34,9 +36,9 @@ export function ResultsTable({
     () => result.recipes.reduce((s, u) => s + u.buildings, 0),
     [result.recipes],
   );
-  const providedInputSet = useMemo(
-    () => new Set(providedInputs),
-    [providedInputs],
+  const fullyProvidedInputSet = useMemo(
+    () => new Set(fullyProvidedInputs),
+    [fullyProvidedInputs],
   );
   const hiddenSectionIdSet = useMemo(
     () => new Set(hiddenSectionIds),
@@ -99,8 +101,33 @@ export function ResultsTable({
         </div>
       )}
 
+      {!hiddenSectionIdSet.has("flow-diagram") &&
+        result.feasible &&
+        result.recipes.length > 0 && (
+        <CollapsibleSection
+          variant="panel"
+          title="Production flow (diagram)"
+          contentClassName="mt-0"
+          defaultOpen
+        >
+          <p className="mb-2 text-[11px] text-gray-500">
+            Machines as nodes; arrows show intermediate items/min between recipes
+            (same routing as production chains). Click a node to inspect its
+            main product.
+          </p>
+          <ProductionFlowDiagram
+            result={result}
+            onInspectItem={onInspect}
+          />
+        </CollapsibleSection>
+      )}
+
       {!hiddenSectionIdSet.has("recipes-in-use") && (
-        <CollapsibleSection title="Recipes in use" contentClassName="mt-0">
+        <CollapsibleSection
+          variant="panel"
+          title="Recipes in use"
+          contentClassName="mt-0"
+        >
           <div className="-mx-1 overflow-x-auto overflow-y-hidden rounded-md border border-surface-border sm:mx-0">
           <table className="w-full min-w-[640px] text-sm sm:min-w-0">
             <thead className="bg-surface text-[11px] uppercase tracking-wider text-gray-400">
@@ -125,10 +152,10 @@ export function ResultsTable({
                   : undefined;
                 if (!recipe) return null;
                 const visibleInputs = usage.inputs.filter(
-                  (row) => !providedInputSet.has(row.itemId),
+                  (row) => !fullyProvidedInputSet.has(row.itemId),
                 );
                 const omittedInputs = usage.inputs.filter((row) =>
-                  providedInputSet.has(row.itemId),
+                  fullyProvidedInputSet.has(row.itemId),
                 );
                 return (
                   <tr
@@ -178,7 +205,6 @@ export function ResultsTable({
                             onClick={onInspect}
                             onToggleProvidedInput={onToggleProvidedInput}
                             compact
-                            toggleLabel="Restore"
                           />
                         </div>
                       )}
@@ -200,6 +226,7 @@ export function ResultsTable({
 
       {!hiddenSectionIdSet.has("production-chains") && flowEdges.length > 0 && (
         <CollapsibleSection
+          variant="panel"
           title={`Production chains · ${flowEdges.length}`}
           contentClassName="space-y-2"
         >
@@ -230,30 +257,66 @@ export function ResultsTable({
             feasible. Re-enable a recipe for each item (via its detail drawer)
             to close the production loop.
           </p>
-          <div className="mt-3">
+          <div className="mt-3 space-y-2">
+            <p className="text-[11px] leading-relaxed text-amber-200/70">
+              If you already supply these elsewhere, check them off so the
+              planner treats them as external inputs instead of missing recipes.
+            </p>
             <ItemRateGrid
               rows={result.missingInputs}
               onClick={onInspect}
               highlight
+              fullyProvidedInputs={fullyProvidedInputs}
+              onToggleProvidedInput={onToggleProvidedInput}
             />
           </div>
         </div>
       )}
 
       {!hiddenSectionIdSet.has("raw-inputs") && result.rawInputs.length > 0 && (
-        <CollapsibleSection title="Raw inputs" contentClassName="mt-0">
-          <ItemRateGrid rows={result.rawInputs} onClick={onInspect} />
+        <CollapsibleSection
+          variant="panel"
+          title="Raw inputs"
+          contentClassName="mt-0 space-y-2"
+        >
+          <p className="text-[11px] leading-relaxed text-gray-500">
+            Check off each item as you stock or route it externally. The plan
+            recomputes so only what you still need to prepare stays listed.
+          </p>
+          <ItemRateGrid
+            rows={result.rawInputs}
+            onClick={onInspect}
+            fullyProvidedInputs={fullyProvidedInputs}
+            onToggleProvidedInput={onToggleProvidedInput}
+          />
         </CollapsibleSection>
       )}
       {!hiddenSectionIdSet.has("already-made-inputs") &&
         result.providedInputs.length > 0 && (
-        <CollapsibleSection title="Already-made inputs" contentClassName="mt-0">
-          <ItemRateGrid rows={result.providedInputs} onClick={onInspect} />
+        <CollapsibleSection
+          variant="panel"
+          title="Already-made inputs"
+          contentClassName="mt-0 space-y-2"
+        >
+          <p className="text-[11px] leading-relaxed text-gray-500">
+            Unlimited external supply (same checklist as recipe inputs). Uncheck
+            to require that material inside this factory again.
+          </p>
+          <ItemRateGrid
+            rows={result.providedInputs}
+            onClick={onInspect}
+            fullyProvidedInputs={fullyProvidedInputs}
+            onToggleProvidedInput={onToggleProvidedInput}
+          />
         </CollapsibleSection>
       )}
 
       {!hiddenSectionIdSet.has("byproducts") && result.byproducts.length > 0 && (
-        <CollapsibleSection title="Byproducts (surplus)" contentClassName="mt-0">
+        <CollapsibleSection
+          variant="panel"
+          title="Byproducts (surplus)"
+          contentClassName="mt-0"
+        >
           <ItemRateGrid
             rows={result.byproducts}
             onClick={onInspect}
@@ -361,14 +424,12 @@ function ItemRateList({
   onToggleProvidedInput,
   emptyLabel,
   compact,
-  toggleLabel,
 }: {
   rows: Array<{ itemId: string; ratePerMin: number }>;
   onClick: (itemId: string) => void;
   onToggleProvidedInput?: (itemId: string, provided: boolean) => void;
   emptyLabel?: string;
   compact?: boolean;
-  toggleLabel?: string;
 }) {
   if (rows.length === 0) {
     return <span className="text-xs text-gray-500">{emptyLabel ?? "None"}</span>;
@@ -378,6 +439,7 @@ function ItemRateList({
       {rows.map((r) => {
         const it = getItem(r.itemId);
         if (!it) return null;
+        const prepared = Boolean(compact);
         return (
           <div
             key={r.itemId}
@@ -386,6 +448,35 @@ function ItemRateList({
               compact && "bg-surface/50 text-gray-400",
             )}
           >
+            {onToggleProvidedInput && (
+              <label
+                className={cn(
+                  "flex shrink-0 cursor-pointer select-none flex-col items-center justify-center rounded border px-1 py-0.5",
+                  prepared
+                    ? "border-brand/35 bg-brand/10"
+                    : "border-surface-border hover:border-brand/40",
+                )}
+                title={
+                  prepared
+                    ? "Require this input in the factory again"
+                    : "Prepared — supply outside this plan (omit from requirements)"
+                }
+              >
+                <input
+                  type="checkbox"
+                  checked={prepared}
+                  onChange={(event) =>
+                    onToggleProvidedInput(r.itemId, event.target.checked)
+                  }
+                  className="h-3 w-3 accent-brand"
+                  aria-label={
+                    prepared
+                      ? `Still need ${it.name} in this factory`
+                      : `Mark ${it.name} as prepared externally`
+                  }
+                />
+              </label>
+            )}
             <button
               type="button"
               onClick={() => onClick(r.itemId)}
@@ -396,20 +487,6 @@ function ItemRateList({
               <span className="truncate">{it.name}</span>
               <span className="num text-gray-400">{formatRate(r.ratePerMin)}</span>
             </button>
-            {onToggleProvidedInput && (
-              <button
-                type="button"
-                onClick={() => onToggleProvidedInput(r.itemId, !compact)}
-                className="rounded border border-surface-border px-1 py-0.5 text-[10px] hover:border-brand/60"
-                title={
-                  compact
-                    ? "Include this input in recipe requirements"
-                    : "Omit this input from recipe requirements"
-                }
-              >
-                {toggleLabel ?? "Omit"}
-              </button>
-            )}
           </div>
         );
       })}
@@ -421,34 +498,89 @@ function ItemRateGrid({
   rows,
   onClick,
   highlight,
+  fullyProvidedInputs,
+  onToggleProvidedInput,
 }: {
   rows: Array<{ itemId: string; ratePerMin: number }>;
   onClick: (itemId: string) => void;
   highlight?: boolean;
+  fullyProvidedInputs?: string[];
+  onToggleProvidedInput?: (itemId: string, provided: boolean) => void;
 }) {
+  const preparedSet = useMemo(
+    () => new Set(fullyProvidedInputs ?? []),
+    [fullyProvidedInputs],
+  );
+  const showPrep = Boolean(onToggleProvidedInput);
+
   return (
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
       {rows.map((r) => {
         const it = getItem(r.itemId);
         if (!it) return null;
+        const prepared = preparedSet.has(r.itemId);
         return (
-          <button
+          <div
             key={r.itemId}
-            type="button"
-            onClick={() => onClick(r.itemId)}
             className={cn(
-              "card flex items-center gap-2 p-2 text-left transition hover:border-brand/60",
+              "card flex items-stretch gap-0 overflow-hidden p-0 text-left transition",
               highlight && "border-amber-500/50",
             )}
           >
-            <ItemIcon iconUrl={it.iconUrl} alt={it.name} size={32} />
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-xs font-medium">{it.name}</div>
-              <div className="num text-xs text-gray-400">
-                {formatRate(r.ratePerMin)} /min
+            {showPrep && (
+              <label
+                className={cn(
+                  "flex w-11 shrink-0 cursor-pointer select-none flex-col items-center justify-center gap-0.5 border-r px-1.5 py-2 text-center sm:w-12",
+                  prepared
+                    ? "border-brand/35 bg-brand/10"
+                    : "border-surface-border bg-surface-raised/40 hover:bg-surface-raised/70",
+                )}
+                title={
+                  prepared
+                    ? "Uncheck to require this in the factory again"
+                    : "Check when stocked or supplied externally"
+                }
+              >
+                <input
+                  type="checkbox"
+                  checked={prepared}
+                  onChange={(event) =>
+                    onToggleProvidedInput!(r.itemId, event.target.checked)
+                  }
+                  className="h-3.5 w-3.5 accent-brand"
+                  aria-label={
+                    prepared
+                      ? `${it.name}: supplied externally, click to require in factory`
+                      : `${it.name}: mark as prepared externally`
+                  }
+                />
+                <span
+                  className={cn(
+                    "text-[9px] font-semibold uppercase leading-tight tracking-wide",
+                    prepared ? "text-brand/90" : "text-gray-500",
+                  )}
+                >
+                  Prep
+                </span>
+              </label>
+            )}
+            <button
+              type="button"
+              onClick={() => onClick(r.itemId)}
+              className={cn(
+                "flex min-w-0 flex-1 items-center gap-2 p-2 text-left transition hover:border-transparent hover:bg-surface/80",
+                !showPrep && "hover:border-brand/60",
+              )}
+            >
+              <ItemIcon iconUrl={it.iconUrl} alt={it.name} size={32} />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-xs font-medium">{it.name}</div>
+                <div className="num text-xs text-gray-400">
+                  {formatRate(r.ratePerMin)} /min
+                </div>
               </div>
-            </div>
-          </button>
+            </button>
+          </div>
         );
       })}
     </div>

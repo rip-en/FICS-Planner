@@ -109,6 +109,12 @@ export const defaultRecipeFor = (itemId: ClassName): Recipe | undefined => {
   return sorted[0];
 };
 
+/** Machine recipe that is not an alternate, when one exists (for comparing alternates). */
+export const standardRecipeFor = (itemId: ClassName): Recipe | undefined => {
+  const r = defaultRecipeFor(itemId);
+  return r && !r.alternate ? r : undefined;
+};
+
 /** Item map keyed by slug for /items/[id] lookups. */
 export const itemBySlug = (slug: string): Item | undefined =>
   allItems().find((it) => it.slug === slug);

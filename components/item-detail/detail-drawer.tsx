@@ -13,7 +13,13 @@ import { useEffect, useMemo, useState } from "react";
 import { ItemIcon } from "@/components/item-icon";
 import { RecipeCard } from "@/components/item-detail/recipe-card";
 import { CollapsibleSection } from "@/components/ui/collapsible-section";
-import { getItem, recipesConsuming, recipesProducing } from "@/lib/data";
+import {
+  getItem,
+  recipesConsuming,
+  recipesProducing,
+  standardRecipeFor,
+} from "@/lib/data";
+import { dominantProductId } from "@/lib/recipe-compare";
 import { cn } from "@/lib/utils";
 
 function DrawerUnknownItem({
@@ -174,6 +180,11 @@ export function DetailDrawer({
   }, [itemId]);
   const hasCompetitors = producerCount > 1;
 
+  const standardBaselineForItem = useMemo(
+    () => (itemId ? standardRecipeFor(itemId) : undefined),
+    [itemId],
+  );
+
   if (missingItem && itemId) {
     return <DrawerUnknownItem itemId={itemId} onClose={onClose} />;
   }
@@ -270,9 +281,11 @@ export function DetailDrawer({
           </div>
         </header>
 
+        <div className="flex flex-col gap-3 px-3 pb-4 pt-2 sm:px-4">
         <CollapsibleSection
+          variant="panel"
           title={`Recipes · ${producers.length}`}
-          className="border-b border-surface-border p-4"
+          className="min-w-0"
           contentClassName="space-y-2"
         >
           {producers.length === 0 ? (
@@ -297,8 +310,9 @@ export function DetailDrawer({
 
         {alternates.length > 0 && (
           <CollapsibleSection
+            variant="panel"
             title={`Alternate recipes · ${alternates.length}`}
-            className="border-b border-surface-border p-4"
+            className="min-w-0"
             contentClassName="space-y-2"
           >
             <p className="mb-2 text-[11px] text-gray-500">
@@ -332,14 +346,17 @@ export function DetailDrawer({
                     [r.id]: boundedPercent,
                   }));
                 }}
+                compareBaseline={standardBaselineForItem}
+                comparePrimaryItemId={item.id}
               />
             ))}
           </CollapsibleSection>
         )}
 
         <CollapsibleSection
+          variant="panel"
           title={`Used to craft · ${consumers.length}`}
-          className="border-b border-surface-border p-4"
+          className="min-w-0"
           contentClassName="space-y-2"
         >
           {consumers.length === 0 ? (
@@ -349,10 +366,14 @@ export function DetailDrawer({
           ) : (
             <div className="space-y-2">
               {consumers.map((r) => {
-                const firstProductId = r.products[0]?.item;
-                const recipeHasCompetitors = firstProductId
-                  ? recipesProducing(firstProductId).length > 1
+                const mainProductId = dominantProductId(r);
+                const recipeHasCompetitors = mainProductId
+                  ? recipesProducing(mainProductId).length > 1
                   : false;
+                const compareBaselineConsumer =
+                  r.alternate && mainProductId
+                    ? standardRecipeFor(mainProductId)
+                    : undefined;
                 return (
                   <RecipeCard
                     key={r.id}
@@ -387,12 +408,17 @@ export function DetailDrawer({
                           }
                         : undefined
                     }
+                    compareBaseline={compareBaselineConsumer}
+                    comparePrimaryItemId={
+                      r.alternate ? mainProductId : undefined
+                    }
                   />
                 );
               })}
             </div>
           )}
         </CollapsibleSection>
+        </div>
       </div>
     </aside>
   );

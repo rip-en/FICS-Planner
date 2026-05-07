@@ -4,6 +4,7 @@ import Fuse from "fuse.js";
 import { Lightbulb, LineChart, Plus, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ItemIcon } from "@/components/item-icon";
+import { PlannerCollapsiblePanel } from "@/components/planner/planner-collapsible-panel";
 import { CollapsibleSection } from "@/components/ui/collapsible-section";
 import { SearchInput } from "@/components/ui/search-input";
 import { allItems, getItem } from "@/lib/data";
@@ -24,6 +25,7 @@ interface InventoryBudgetPanelProps {
   onInspect: (itemId: string) => void;
   onAddTargetAtRate?: (itemId: string, rate: number) => void;
   hiddenSectionIds?: string[];
+  expandPanelRevision?: number;
 }
 
 export function InventoryBudgetPanel({
@@ -31,6 +33,7 @@ export function InventoryBudgetPanel({
   onInspect,
   onAddTargetAtRate,
   hiddenSectionIds = [],
+  expandPanelRevision,
 }: InventoryBudgetPanelProps) {
   const setRawCap = usePlannerStore((s) => s.setRawCap);
   const setRawExcluded = usePlannerStore((s) => s.setRawExcluded);
@@ -99,12 +102,9 @@ export function InventoryBudgetPanel({
     () => new Set(config.providedInputs ?? []),
     [config.providedInputs],
   );
-  const providedEntries = useMemo(
-    () =>
-      Array.from(providedInputs).sort((a, b) =>
-        (getItem(a)?.name ?? a).localeCompare(getItem(b)?.name ?? b),
-      ),
-    [providedInputs],
+  const providedInputCapsMap = useMemo(
+    () => config.providedInputCaps ?? EMPTY_RAW_CAPS,
+    [config.providedInputCaps],
   );
 
   const [analyzeId, setAnalyzeId] = useState<string | null>(null);
@@ -158,7 +158,13 @@ export function InventoryBudgetPanel({
         if (excludedRawInputs.has(itemId)) return;
         setRawExcluded(itemId, true);
       } else {
-        if (providedInputs.has(itemId)) return;
+        if (
+          providedInputs.has(itemId) ||
+          (providedInputCapsMap[itemId] !== undefined &&
+            providedInputCapsMap[itemId]! > 0)
+        ) {
+          return;
+        }
         setProvidedInput(itemId, true);
       }
       setAddQuery("");
@@ -169,6 +175,7 @@ export function InventoryBudgetPanel({
       caps,
       excludedRawInputs,
       providedInputs,
+      providedInputCapsMap,
       setProvidedInput,
       setRawCap,
       setRawExcluded,
@@ -222,17 +229,22 @@ export function InventoryBudgetPanel({
   }, [config]);
 
   return (
-    <div className="card flex flex-col gap-3 p-3 sm:gap-4 sm:p-4">
-      <header>
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-400">
+    <PlannerCollapsiblePanel
+      id="inventory-budget"
+      expandRevision={expandPanelRevision}
+      title={
+        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-gray-400">
+          <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-brand" />
           Raw budgets and automation insight
-        </h2>
-        <p className="mt-1 text-xs leading-relaxed text-gray-500">
+        </div>
+      }
+    >
+      <div className="flex flex-col gap-3 px-3 pb-3 sm:gap-4 sm:px-4 sm:pb-4">
+        <p className="text-xs leading-relaxed text-gray-500">
           Set a max supply rate (items/min) for each resource you want to limit.
           Other inputs stay unlimited, so list everything that constrains you.
           The planner and the tools below use the same caps and recipe toggles.
         </p>
-      </header>
 
       <div className="flex flex-col gap-3">
         {!hiddenSectionIdSet.has("capped-inputs") && (
@@ -392,7 +404,9 @@ export function InventoryBudgetPanel({
                         ? caps[it.id] !== undefined || excludedRawInputs.has(it.id)
                         : addMode === "exclude"
                           ? excludedRawInputs.has(it.id)
-                          : providedInputs.has(it.id)
+                          : providedInputs.has(it.id) ||
+                            (providedInputCapsMap[it.id] !== undefined &&
+                              providedInputCapsMap[it.id]! > 0)
                     }
                     className={cn(
                       "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-surface-raised",
@@ -400,7 +414,9 @@ export function InventoryBudgetPanel({
                         ? caps[it.id] !== undefined || excludedRawInputs.has(it.id)
                         : addMode === "exclude"
                           ? excludedRawInputs.has(it.id)
-                          : providedInputs.has(it.id)) &&
+                          : providedInputs.has(it.id) ||
+                            (providedInputCapsMap[it.id] !== undefined &&
+                              providedInputCapsMap[it.id]! > 0)) &&
                         "opacity-40",
                     )}
                   >
@@ -443,48 +459,18 @@ export function InventoryBudgetPanel({
                 setShowAdd(true);
               }}
               className="btn min-h-10 w-full touch-manipulation justify-center gap-1.5 text-xs sm:min-h-0 sm:col-span-2"
-              title="Mark an item as already-made and externally provided"
+              title="Mark an item as already-made and externally provided (unlimited)"
             >
               <Plus className="h-3.5 w-3.5" />
               Add already-made input
             </button>
           </div>
         )}
-        {providedEntries.length > 0 && (
-          <div className="mt-3 rounded-md border border-brand/40 bg-brand/5 p-2">
-            <p className="mb-2 text-xs text-brand/90">
-              Already-made inputs (planner will treat as provided):
-            </p>
-            <ul className="space-y-1.5">
-              {providedEntries.map((itemId) => {
-                const it = getItem(itemId);
-                if (!it) return null;
-                return (
-                  <li
-                    key={`provided-${itemId}`}
-                    className="flex items-center gap-2 rounded border border-brand/30 bg-surface p-1.5"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => onInspect(itemId)}
-                      className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                    >
-                      <ItemIcon iconUrl={it.iconUrl} alt={it.name} size={22} />
-                      <span className="truncate text-sm">{it.name}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setProvidedInput(itemId, false)}
-                      className="btn px-2 py-1 text-[11px]"
-                    >
-                      Include in plan
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        )}
+        <p className="mt-2 text-[11px] text-gray-500">
+          Unlimited already-made items are listed in the{" "}
+          <span className="text-gray-400">External supply / omit</span> section. Use
+          that section to set a partial external rate (produce the rest here).
+        </p>
           </CollapsibleSection>
         )}
 
@@ -772,6 +758,7 @@ export function InventoryBudgetPanel({
           </CollapsibleSection>
         )}
       </div>
-    </div>
+      </div>
+    </PlannerCollapsiblePanel>
   );
 }

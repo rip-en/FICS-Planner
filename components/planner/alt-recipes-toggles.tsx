@@ -1,13 +1,17 @@
 "use client";
 
-import { ChevronDown } from "lucide-react";
 import { useMemo, useState } from "react";
 import Fuse from "fuse.js";
 import { knownAlternates } from "@/lib/planner/solver";
 import { usePlannerStore } from "@/lib/store/planner-store";
-import { getBuilding, getItem } from "@/lib/data";
+import { getBuilding, getItem, standardRecipeFor } from "@/lib/data";
+import {
+  dominantProductId,
+  formatAlternateImpactSummary,
+} from "@/lib/recipe-compare";
 import { ItemIcon } from "@/components/item-icon";
 import { SourceBadge } from "@/components/item-detail/recipe-card";
+import { PlannerCollapsiblePanel } from "@/components/planner/planner-collapsible-panel";
 import { SearchInput } from "@/components/ui/search-input";
 import { cn } from "@/lib/utils";
 import type { RecipeUnlockSource } from "@/types/game";
@@ -16,6 +20,7 @@ interface AltRecipeTogglesProps {
   enabled: string[];
   recipesInUse: string[];
   alternateInputRatios: Record<string, number>;
+  expandPanelRevision?: number;
 }
 
 type SourceFilter = "all" | RecipeUnlockSource;
@@ -31,6 +36,7 @@ export function AltRecipeToggles({
   enabled,
   recipesInUse,
   alternateInputRatios,
+  expandPanelRevision,
 }: AltRecipeTogglesProps) {
   const toggle = usePlannerStore((s) => s.toggleAlternate);
   const setAlternateInputRatio = usePlannerStore((s) => s.setAlternateInputRatio);
@@ -40,7 +46,6 @@ export function AltRecipeToggles({
   const [query, setQuery] = useState("");
   const [onlyEnabled, setOnlyEnabled] = useState(false);
   const [source, setSource] = useState<SourceFilter>("all");
-  const [bodyOpen, setBodyOpen] = useState(true);
 
   const enabledSet = useMemo(() => new Set(enabled), [enabled]);
   const inUseSet = useMemo(() => new Set(recipesInUse), [recipesInUse]);
@@ -81,37 +86,22 @@ export function AltRecipeToggles({
     recipes.length > 0 && recipes.every((r) => enabledSet.has(r.id));
 
   return (
-    <div className="card relative overflow-hidden">
-      <div className="belt absolute inset-x-0 top-0" aria-hidden />
-      <button
-        type="button"
-        id="alt-recipes-toggle"
-        aria-expanded={bodyOpen}
-        aria-controls="alt-recipes-body"
-        onClick={() => setBodyOpen((o) => !o)}
-        className="flex min-h-11 w-full touch-manipulation items-center justify-between gap-2 border-b border-surface-border px-3 py-2 text-left sm:min-h-0"
-      >
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs font-semibold uppercase tracking-[0.12em] text-gray-400">
-            <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-brand" />
-            <span className="shrink-0">Alternate recipes</span>
-            <span className="font-normal normal-case tracking-normal text-gray-500">
-              <span className="num">{enabled.length}</span> enabled ·{" "}
-              <span className="num">{inUseSet.size}</span> in use
-            </span>
-          </div>
+    <PlannerCollapsiblePanel
+      id="alt-recipes"
+      expandRevision={expandPanelRevision}
+      title={
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs font-semibold uppercase tracking-[0.12em] text-gray-400">
+          <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-brand" />
+          <span className="shrink-0">Alternate recipes</span>
+          <span className="font-normal normal-case tracking-normal text-gray-500">
+            <span className="num">{enabled.length}</span> enabled ·{" "}
+            <span className="num">{inUseSet.size}</span> in use
+          </span>
         </div>
-        <ChevronDown
-          className={cn(
-            "h-4 w-4 shrink-0 text-gray-500 transition-transform",
-            bodyOpen && "rotate-180",
-          )}
-          aria-hidden
-        />
-      </button>
-      {bodyOpen && (
-        <div id="alt-recipes-body" role="region" aria-labelledby="alt-recipes-toggle">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-surface-border px-3 py-2">
+      }
+    >
+      <>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-surface-border px-3 py-2">
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -175,9 +165,19 @@ export function AltRecipeToggles({
               const active = enabledSet.has(r.id);
               const inUse = inUseSet.has(r.id);
               const building = getBuilding(r.producedIn[0] ?? "");
+              const primaryId = dominantProductId(r);
+              const baselineRecipe =
+                primaryId && standardRecipeFor(primaryId);
+              const impactTooltip =
+                primaryId &&
+                baselineRecipe &&
+                baselineRecipe.id !== r.id
+                  ? formatAlternateImpactSummary(r, baselineRecipe, primaryId)
+                  : undefined;
               return (
                 <li
                   key={r.id}
+                  title={impactTooltip ?? undefined}
                   className={cn(
                     "flex flex-col gap-1 border-t border-surface-border px-3 py-2 text-sm sm:flex-row sm:items-center sm:py-1.5",
                     active && "bg-brand/5",
@@ -255,8 +255,7 @@ export function AltRecipeToggles({
               </li>
             )}
           </ul>
-        </div>
-      )}
-    </div>
+      </>
+    </PlannerCollapsiblePanel>
   );
 }

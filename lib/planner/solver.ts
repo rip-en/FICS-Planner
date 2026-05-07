@@ -7,6 +7,8 @@ import {
   recipesProducing,
 } from "@/lib/data";
 import type { Recipe } from "@/types/game";
+import { recipePeakPowerMw } from "@/lib/recipe-power";
+import { somersloopRecipeMultipliers } from "@/lib/somersloop";
 import { sortRecipeUsagesByProductionFlow } from "./production-flow";
 import type { PlannerConfig, SolverResult } from "./types";
 
@@ -191,7 +193,13 @@ export function solvePlan(config: PlannerConfig): SolverResult {
   const pool = buildAvailablePool(recipeIds);
   const available = pool.all;
   const targetMap = new Map(config.targets.map((t) => [t.itemId, t.rate]));
-  const providedInputs = new Set(config.providedInputs ?? []);
+  const providedUnlimited = new Set(config.providedInputs ?? []);
+  const providedInputCaps = config.providedInputCaps ?? {};
+  const providedItems = new Set<string>();
+  for (const id of providedUnlimited) providedItems.add(id);
+  for (const [id, cap] of Object.entries(providedInputCaps)) {
+    if (Number.isFinite(cap) && cap > 0) providedItems.add(id);
+  }
 
   if (config.targets.length === 0 || recipes.length === 0) {
     return {
@@ -224,6 +232,7 @@ export function solvePlan(config: PlannerConfig): SolverResult {
   };
   const excludedRawInputs = new Set(config.excludedRawInputs ?? []);
   const alternateInputRatios = config.alternateInputRatios ?? {};
+  const somersloopAmp = config.somersloopAmplification;
 
   // Constraint for each non-raw referenced item: net output >= target (or 0).
   for (const itemId of referenced) {
@@ -239,11 +248,19 @@ export function solvePlan(config: PlannerConfig): SolverResult {
     const target = targetMap.get(itemId) ?? 0;
     model.constraints[itemId] = { min: target };
   }
-  for (const itemId of providedInputs) {
+  for (const itemId of providedItems) {
     if (targetMap.has(itemId)) continue;
     if (!referenced.has(itemId)) continue;
     if (!model.constraints[itemId]) model.constraints[itemId] = { min: 0 };
-    model.variables[`provided:${itemId}`] = { [itemId]: 1, cost: 0 };
+    const cap = providedInputCaps[itemId];
+    const hasCap = cap !== undefined && Number.isFinite(cap) && cap > 0;
+    const v: Record<string, number> = { [itemId]: 1, cost: 0 };
+    if (hasCap) {
+      const capKey = `providedcap:${itemId}`;
+      v[capKey] = 1;
+      model.constraints[capKey] = { max: cap };
+    }
+    model.variables[`provided:${itemId}`] = v;
   }
 
   // One variable per active recipe; one extra variable per available item
@@ -252,8 +269,12 @@ export function solvePlan(config: PlannerConfig): SolverResult {
 
   for (const r of recipes) {
     const v: Record<string, number> = {};
+    const { output: sloopOut } = somersloopRecipeMultipliers(
+      r.producedIn[0],
+      somersloopAmp,
+    );
     for (const out of r.products) {
-      v[out.item] = (v[out.item] ?? 0) + out.ratePerMin;
+      v[out.item] = (v[out.item] ?? 0) + out.ratePerMin * sloopOut;
     }
     const ingredientRatio = alternateIngredientScale(r, alternateInputRatios);
     for (const inp of r.ingredients) {
@@ -333,24 +354,29 @@ export function solvePlan(config: PlannerConfig): SolverResult {
     const runs = solved[r.id] ?? 0;
     if (runs <= EPS) continue;
     const building = getBuilding(r.producedIn[0] ?? "");
-    const powerPerRun = r.maxPower > 0 ? r.maxPower : building?.powerConsumption ?? 0;
+    const powerPerRun = recipePeakPowerMw(r, building);
+    const { output: sloopOut, power: sloopPow } = somersloopRecipeMultipliers(
+      r.producedIn[0],
+      somersloopAmp,
+    );
     const ratio = alternateIngredientScale(r, alternateInputRatios);
     usage.push({
       recipeId: r.id,
       runs,
       buildings: runs,
       buildingId: r.producedIn[0],
-      powerMW: runs * powerPerRun,
+      powerMW: runs * powerPerRun * sloopPow,
       inputs: r.ingredients.map((i) => ({
         itemId: i.item,
         ratePerMin: i.ratePerMin * ratio * runs,
       })),
       outputs: r.products.map((p) => ({
         itemId: p.item,
-        ratePerMin: p.ratePerMin * runs,
+        ratePerMin: p.ratePerMin * sloopOut * runs,
       })),
     });
-    for (const p of r.products) net[p.item] = (net[p.item] ?? 0) + p.ratePerMin * runs;
+    for (const p of r.products)
+      net[p.item] = (net[p.item] ?? 0) + p.ratePerMin * sloopOut * runs;
     for (const i of r.ingredients) {
       net[i.item] = (net[i.item] ?? 0) - i.ratePerMin * ratio * runs;
     }
