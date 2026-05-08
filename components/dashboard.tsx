@@ -43,6 +43,10 @@ import {
 } from "@/lib/store/planner-store";
 import { cn } from "@/lib/utils";
 
+/** Stable fallbacks — inline `[]` / `{}` break referential equality every render. */
+const STABLE_EMPTY_STRING_LIST: string[] = [];
+const STABLE_EMPTY_ALT_INPUT_RATIOS: Record<string, number> = {};
+
 const DASHBOARD_SECTION_SETTINGS: PlannerSectionSetting[] = [
   { id: "inventory-budget", label: "Raw budgets panel" },
   { id: "capped-inputs", label: "Capped inputs" },
@@ -286,11 +290,14 @@ export function Dashboard() {
   }, [plan]);
 
   const recipesInUse = useMemo(
-    () => solverResult?.recipes.map((r) => r.recipeId) ?? [],
+    () =>
+      solverResult?.recipes.map((r) => r.recipeId) ?? STABLE_EMPTY_STRING_LIST,
     [solverResult],
   );
-  const enabledAlternates = plan?.config.enabledAlternates ?? [];
-  const disabledRecipes = plan?.config.disabledRecipes ?? [];
+  const enabledAlternates =
+    plan?.config.enabledAlternates ?? DEFAULT_PLANNER_CONFIG.enabledAlternates;
+  const disabledRecipes =
+    plan?.config.disabledRecipes ?? DEFAULT_PLANNER_CONFIG.disabledRecipes;
 
   return (
     <div
@@ -419,7 +426,9 @@ export function Dashboard() {
               <AltRecipeToggles
                 enabled={enabledAlternates}
                 recipesInUse={recipesInUse}
-                alternateInputRatios={plan?.config.alternateInputRatios ?? {}}
+                alternateInputRatios={
+                  plan?.config.alternateInputRatios ?? STABLE_EMPTY_ALT_INPUT_RATIOS
+                }
                 expandPanelRevision={panelExpandRevision["alt-recipes"] ?? 0}
               />
             )}
@@ -427,7 +436,9 @@ export function Dashboard() {
               <ResultsTable
                 result={solverResult}
                 onInspect={pushItem}
-                fullyProvidedInputs={plan?.config.providedInputs ?? []}
+                fullyProvidedInputs={
+                  plan?.config.providedInputs ?? STABLE_EMPTY_STRING_LIST
+                }
                 onToggleProvidedInput={setProvidedInput}
                 hiddenSectionIds={hiddenSectionIds}
               />
@@ -460,7 +471,9 @@ export function Dashboard() {
             onToggleAlternate={toggleAlternate}
             onToggleDisabled={toggleDisabled}
             onUseOnlyThis={handleUseOnlyThis}
-            providedInputs={plan?.config.providedInputs ?? []}
+            providedInputs={
+              plan?.config.providedInputs ?? STABLE_EMPTY_STRING_LIST
+            }
             onToggleProvidedInput={setProvidedInput}
             addTargetBlockedByHub={
               selected != null &&

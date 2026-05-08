@@ -12,6 +12,8 @@ import type { PlannerConfig, PlannerTarget } from "@/lib/planner/types";
 import { DEFAULT_PLANNER_CONFIG } from "@/lib/planner/types";
 
 const EMPTY_TARGETS: PlannerTarget[] = [];
+/** Stable empty list for selectors — never use `?? []` inline (new ref breaks useSyncExternalStore). */
+const EMPTY_RECIPE_BUILD_PROGRESS_IDS: string[] = [];
 
 export interface SavedPlan {
   id: string;
@@ -672,7 +674,9 @@ export function useRecipeBuildProgressChecklist(): {
 } {
   const ids = usePlannerStore((s) => {
     const planId = s.activePlanId;
-    return s.recipeBuildProgressByPlanId[planId] ?? [];
+    return (
+      s.recipeBuildProgressByPlanId[planId] ?? EMPTY_RECIPE_BUILD_PROGRESS_IDS
+    );
   });
   const toggleRecipeBuildProgress = usePlannerStore(
     (s) => s.toggleRecipeBuildProgress,
