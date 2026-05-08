@@ -1,8 +1,13 @@
 "use client";
 
-import { AlertTriangle, Factory, Flame, Gauge, Zap } from "lucide-react";
+import { AlertTriangle, Factory, Flame, Gauge, ListChecks, Zap } from "lucide-react";
 import { useMemo } from "react";
 import { getBuilding, getItem, getRecipe } from "@/lib/data";
+import {
+  aggregateInputsFromUsages,
+  filterRawRows,
+  ratesMapToRows,
+} from "@/lib/planner/build-progress-inputs";
 import { useRecipeBuildProgressChecklist } from "@/lib/store/planner-store";
 import { buildProductionFlowEdges } from "@/lib/planner/production-flow";
 import type { SolverResult } from "@/lib/planner/types";
@@ -48,6 +53,64 @@ export function ResultsTable({
   const { checkedRecipeIds, toggleRecipeChecked } =
     useRecipeBuildProgressChecklist();
 
+  const remainingInputsMap = useMemo(
+    () =>
+      aggregateInputsFromUsages(result.recipes, {
+        excludeRecipeIds: checkedRecipeIds,
+        excludeItemIds: fullyProvidedInputSet,
+      }),
+    [result.recipes, checkedRecipeIds, fullyProvidedInputSet],
+  );
+  const remainingMaterialRows = useMemo(
+    () => ratesMapToRows(remainingInputsMap),
+    [remainingInputsMap],
+  );
+  const remainingRawRows = useMemo(
+    () => filterRawRows(remainingMaterialRows),
+    [remainingMaterialRows],
+  );
+
+  const linesMarkedBuilt = useMemo(
+    () =>
+      result.recipes.reduce(
+        (n, u) => n + (checkedRecipeIds.has(u.recipeId) ? 1 : 0),
+        0,
+      ),
+    [result.recipes, checkedRecipeIds],
+  );
+
+  const rawRowsForGrid = useMemo(
+    () =>
+      linesMarkedBuilt === 0 ? result.rawInputs : remainingRawRows,
+    [linesMarkedBuilt, result.rawInputs, remainingRawRows],
+  );
+
+  const showRawInputsSection =
+    (linesMarkedBuilt === 0 && result.rawInputs.length > 0) ||
+    (linesMarkedBuilt > 0 && result.recipes.length > 0);
+
+  const externalInputsHint = useMemo(() => {
+    if (linesMarkedBuilt > 0 && remainingRawRows.length > 0) {
+      const next = remainingRawRows
+        .slice(0, 2)
+        .map((r) => getItem(r.itemId)?.name)
+        .filter(Boolean)
+        .join(", ");
+      if (next) return `${next}${remainingRawRows.length > 2 ? "…" : ""}`;
+    }
+    const base = [...result.rawInputs, ...result.providedInputs]
+      .slice(0, 2)
+      .map((r) => getItem(r.itemId)?.name)
+      .filter(Boolean)
+      .join(", ");
+    return base || undefined;
+  }, [
+    linesMarkedBuilt,
+    remainingRawRows,
+    result.rawInputs,
+    result.providedInputs,
+  ]);
+
   if (!result.feasible) {
     return (
       <div className="card border-red-500/40 bg-red-500/5 p-4">
@@ -69,14 +132,18 @@ export function ResultsTable({
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {!hiddenSectionIdSet.has("summary-cards") && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <SummaryCard
             icon={<Factory className="h-4 w-4" />}
             label="Buildings"
             value={formatBuildingsCount(fractionalBuildingsTotal)}
-            hint={`${result.recipes.length} recipes · Σ fractional machines (100% clock)`}
+            hint={
+              result.recipes.length > 0
+                ? `${linesMarkedBuilt}/${result.recipes.length} marked built · Σ fractional machines (100% clock)`
+                : "Σ fractional machines (100% clock)"
+            }
           />
           <SummaryCard
             icon={<Zap className="h-4 w-4" />}
@@ -87,13 +154,7 @@ export function ResultsTable({
             icon={<Flame className="h-4 w-4" />}
             label="External inputs"
             value={String(result.rawInputs.length + result.providedInputs.length)}
-            hint={
-              [...result.rawInputs, ...result.providedInputs]
-                .slice(0, 2)
-                .map((r) => getItem(r.itemId)?.name)
-                .filter(Boolean)
-                .join(", ") || undefined
-            }
+            hint={externalInputsHint}
           />
           <SummaryCard
             icon={<Gauge className="h-4 w-4" />}
@@ -126,6 +187,41 @@ export function ResultsTable({
         </CollapsibleSection>
       )}
 
+      {!hiddenSectionIdSet.has("outstanding-materials") &&
+        result.recipes.length > 0 && (
+        <CollapsibleSection
+          variant="panel"
+          title={`Materials still needed · ${remainingMaterialRows.length}`}
+          contentClassName="mt-0 space-y-2"
+          defaultOpen={remainingMaterialRows.length > 0}
+        >
+          <div className="flex items-start gap-2 rounded-md border border-brand/25 bg-brand/5 px-2.5 py-2 text-[11px] leading-relaxed text-gray-400">
+            <ListChecks
+              className="mt-0.5 h-4 w-4 shrink-0 text-brand/90"
+              aria-hidden
+            />
+            <p>
+              Ingredient rates summed over recipe lines you have{" "}
+              <span className="text-gray-300">not</span> marked built (after
+              omitting Prep items). Extractors only: see{" "}
+              <span className="text-gray-300">Raw inputs</span> further down.
+            </p>
+          </div>
+          {remainingMaterialRows.length === 0 ? (
+            <p className="rounded-md border border-emerald-500/35 bg-emerald-500/10 px-3 py-2.5 text-sm text-emerald-200/95">
+              Every line is marked built — nothing left on this checklist.
+            </p>
+          ) : (
+            <ItemRateGrid
+              rows={remainingMaterialRows}
+              onClick={onInspect}
+              fullyProvidedInputs={fullyProvidedInputs}
+              onToggleProvidedInput={onToggleProvidedInput}
+            />
+          )}
+        </CollapsibleSection>
+      )}
+
       {!hiddenSectionIdSet.has("recipes-in-use") && (
         <CollapsibleSection
           variant="panel"
@@ -133,8 +229,11 @@ export function ResultsTable({
           contentClassName="mt-0"
         >
           <p className="mb-2 text-[11px] leading-relaxed text-gray-500">
-            Check each row when that machine line is built in-game. This is only
-            a progress hint — it does not change the plan.
+            Mark a row when that machine line is finished.{" "}
+            <span className="text-gray-400">Materials still needed</span> above
+            and <span className="text-gray-400">Raw inputs</span> below only
+            count lines you have not checked off yet (plan targets stay the
+            same).
           </p>
           <div className="-mx-1 overflow-x-auto overflow-y-hidden rounded-md border border-surface-border sm:mx-0">
           <table className="w-full min-w-[680px] text-sm sm:min-w-0">
@@ -250,6 +349,7 @@ export function ResultsTable({
                         onClick={onInspect}
                         onToggleProvidedInput={onToggleProvidedInput}
                         emptyLabel="All inputs excluded"
+                        strikeThrough={done}
                       />
                       {omittedInputs.length > 0 && (
                         <div className="mt-1.5">
@@ -258,6 +358,7 @@ export function ResultsTable({
                             onClick={onInspect}
                             onToggleProvidedInput={onToggleProvidedInput}
                             compact
+                            strikeThrough={done}
                           />
                         </div>
                       )}
@@ -266,6 +367,7 @@ export function ResultsTable({
                       <ItemRateList
                         rows={usage.outputs}
                         onClick={onInspect}
+                        strikeThrough={done}
                       />
                     </td>
                   </tr>
@@ -326,22 +428,45 @@ export function ResultsTable({
         </div>
       )}
 
-      {!hiddenSectionIdSet.has("raw-inputs") && result.rawInputs.length > 0 && (
+      {!hiddenSectionIdSet.has("raw-inputs") && showRawInputsSection && (
         <CollapsibleSection
           variant="panel"
-          title="Raw inputs"
+          title={
+            linesMarkedBuilt > 0
+              ? `Raw inputs (unbuilt lines) · ${rawRowsForGrid.length}`
+              : "Raw inputs"
+          }
           contentClassName="mt-0 space-y-2"
         >
           <p className="text-[11px] leading-relaxed text-gray-500">
-            Check off each item as you stock or route it externally. The plan
-            recomputes so only what you still need to prepare stays listed.
+            {linesMarkedBuilt > 0 ? (
+              <>
+                Raw resources still required by lines you have not checked off in{" "}
+                <span className="text-gray-400">Recipes in use</span>. Use Prep
+                when you stock or belt them in from outside this plan.
+              </>
+            ) : (
+              <>
+                Check off each item as you stock or route it externally. The plan
+                recomputes so only what you still need to prepare stays listed.
+              </>
+            )}
           </p>
-          <ItemRateGrid
-            rows={result.rawInputs}
-            onClick={onInspect}
-            fullyProvidedInputs={fullyProvidedInputs}
-            onToggleProvidedInput={onToggleProvidedInput}
-          />
+          {rawRowsForGrid.length === 0 ? (
+            linesMarkedBuilt > 0 ? (
+              <p className="rounded-md border border-surface-border bg-surface/60 px-3 py-2.5 text-xs text-gray-400">
+                No raw resources feed the lines still on your checklist — only
+                intermediates (see materials above).
+              </p>
+            ) : null
+          ) : (
+            <ItemRateGrid
+              rows={rawRowsForGrid}
+              onClick={onInspect}
+              fullyProvidedInputs={fullyProvidedInputs}
+              onToggleProvidedInput={onToggleProvidedInput}
+            />
+          )}
         </CollapsibleSection>
       )}
       {!hiddenSectionIdSet.has("already-made-inputs") &&
@@ -477,12 +602,14 @@ function ItemRateList({
   onToggleProvidedInput,
   emptyLabel,
   compact,
+  strikeThrough,
 }: {
   rows: Array<{ itemId: string; ratePerMin: number }>;
   onClick: (itemId: string) => void;
   onToggleProvidedInput?: (itemId: string, provided: boolean) => void;
   emptyLabel?: string;
   compact?: boolean;
+  strikeThrough?: boolean;
 }) {
   if (rows.length === 0) {
     return <span className="text-xs text-gray-500">{emptyLabel ?? "None"}</span>;
@@ -499,6 +626,7 @@ function ItemRateList({
             className={cn(
               "flex items-center gap-1 rounded-md border border-surface-border bg-surface px-1.5 py-0.5 text-xs",
               compact && "bg-surface/50 text-gray-400",
+              strikeThrough && "opacity-70",
             )}
           >
             {onToggleProvidedInput && (
@@ -533,7 +661,10 @@ function ItemRateList({
             <button
               type="button"
               onClick={() => onClick(r.itemId)}
-              className="flex min-w-0 items-center gap-1 hover:text-brand"
+              className={cn(
+                "flex min-w-0 items-center gap-1 hover:text-brand",
+                strikeThrough && "text-gray-500 line-through",
+              )}
               title={it.name}
             >
               <ItemIcon iconUrl={it.iconUrl} alt={it.name} size={16} />

@@ -58,9 +58,10 @@ const DASHBOARD_SECTION_SETTINGS: PlannerSectionSetting[] = [
   { id: "recipe-toggles", label: "Recipe toggles" },
   { id: "results", label: "Results panel" },
   { id: "summary-cards", label: "Summary cards" },
+  { id: "flow-diagram", label: "Flow diagram" },
+  { id: "outstanding-materials", label: "Materials still needed" },
   { id: "recipes-in-use", label: "Recipes in use" },
   { id: "production-chains", label: "Production chains" },
-  { id: "flow-diagram", label: "Flow diagram" },
   { id: "missing-inputs", label: "Missing inputs" },
   { id: "raw-inputs", label: "Raw inputs" },
   { id: "already-made-inputs", label: "Already-made inputs" },
@@ -331,7 +332,7 @@ export function Dashboard() {
             !isDesktopLayout && mobileTab !== "plan" && "hidden",
           )}
         >
-          <div className="mx-auto flex max-w-5xl flex-col gap-3 sm:gap-4">
+          <div className="mx-auto flex max-w-5xl flex-col gap-4 sm:gap-5">
             {plan &&
               (solverWorking || hubTierScanPending) && (
                 <div

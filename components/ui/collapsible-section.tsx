@@ -48,9 +48,9 @@ export function CollapsibleSection({
         onClick={() => setOpen((v) => !v)}
         className={cn(
           "flex w-full items-center justify-between gap-2 text-left transition hover:text-gray-200",
-          isPanel
-            ? "min-h-11 touch-manipulation rounded-t-lg border-b border-transparent px-3 py-2.5 sm:min-h-0 sm:py-2"
-            : "mb-2 min-h-10 touch-manipulation sm:min-h-0",
+          isPanel &&
+            "min-h-11 touch-manipulation rounded-t-lg border-b border-transparent px-3 py-2.5 hover:bg-surface/40 sm:min-h-0 sm:py-2",
+          !isPanel && "mb-2 min-h-10 touch-manipulation sm:min-h-0",
           open && isPanel && "border-surface-border",
         )}
       >
