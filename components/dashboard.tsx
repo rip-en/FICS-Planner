@@ -32,7 +32,10 @@ import {
   parseHashPlanFragment,
 } from "@/lib/plan-share";
 import { solvePlan } from "@/lib/planner/solver";
-import type { SolverResult } from "@/lib/planner/types";
+import {
+  DEFAULT_PLANNER_CONFIG,
+  type SolverResult,
+} from "@/lib/planner/types";
 import {
   useActivePlan,
   useActiveTargets,
@@ -394,22 +397,10 @@ export function Dashboard() {
                 expandPanelRevision={
                   panelExpandRevision["targets-panel"] ?? 0
                 }
-                targets={plan?.config.targets ?? []}
-                config={
-                  plan?.config ?? {
-                    targets: [],
-                    enabledAlternates: [],
-                    disabledRecipes: [],
-                    objective: "buildings",
-                    rawCaps: undefined,
-                    excludedRawInputs: undefined,
-                    providedInputs: undefined,
-                    providedInputCaps: undefined,
-                    alternateInputRatios: undefined,
-                    maxCompletedHubTier: undefined,
-                    somersloopAmplification: undefined,
-                  }
+                targets={
+                  plan?.config.targets ?? DEFAULT_PLANNER_CONFIG.targets
                 }
+                config={plan?.config ?? DEFAULT_PLANNER_CONFIG}
                 hubProducibleItemIds={hubProducibleItemIds}
                 hubTierScanPending={hubTierScanPending}
                 onInspect={pushItem}

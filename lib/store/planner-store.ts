@@ -578,6 +578,30 @@ export const usePlannerStore = create<PlannerState>()(
         activePlanId: state.activePlanId,
         recipeBuildProgressByPlanId: state.recipeBuildProgressByPlanId,
       }),
+      migrate: (persistedState) => {
+        const p = persistedState as Partial<{
+          plans: Record<string, SavedPlan>;
+          activePlanId: string;
+          recipeBuildProgressByPlanId: Record<string, string[]>;
+        }>;
+        if (!p || typeof p !== "object" || !p.plans || !p.activePlanId) {
+          return persistedState;
+        }
+        const mergedPlans: Record<string, SavedPlan> = { ...p.plans };
+        for (const key of Object.keys(mergedPlans)) {
+          const pl = mergedPlans[key];
+          if (!pl?.config) continue;
+          mergedPlans[key] = {
+            ...pl,
+            config: { ...DEFAULT_PLANNER_CONFIG, ...pl.config },
+          };
+        }
+        return {
+          plans: mergedPlans,
+          activePlanId: p.activePlanId,
+          recipeBuildProgressByPlanId: p.recipeBuildProgressByPlanId ?? {},
+        };
+      },
       merge: (persistedState, currentState) => {
         const p = persistedState as Partial<PlannerState> | undefined;
         if (!p || typeof p !== "object" || !p.plans) {
