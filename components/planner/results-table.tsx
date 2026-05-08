@@ -177,8 +177,9 @@ export function ResultsTable({
           <p className="mb-2 text-[11px] text-gray-500">
             Top-down layout: each intermediate item is its own arrow (parallel
             feeds into one machine no longer collapse to a single edge). Same
-            routing data as production chains. Click a node to inspect its main
-            product.
+            routing data as production chains. Wheel to zoom, Space+drag or
+            middle-mouse to pan; use Expand for fullscreen. Click a node to
+            inspect its main product.
           </p>
           <ProductionFlowDiagram
             result={result}
